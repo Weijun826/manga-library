@@ -24,24 +24,13 @@
 
 **Files:**
 - Create: `src-tauri/windows/hooks.nsh`
-- Create: `src-tauri/tests/installer_config.rs`
 - Modify: `src-tauri/tauri.conf.json`
 
 **Interfaces:**
 - Consumes: Tauri NSIS `NSIS_HOOK_POSTINSTALL` and `NSIS_HOOK_POSTUNINSTALL`.
 - Produces: `%USERPROFILE%\\Desktop\\漫畫書庫.lnk` pointing to `$INSTDIR\\manga-shelf.exe`; uninstall removes only that shortcut.
 
-- [ ] **Step 1: Write the failing configuration test**
-
-Create `installer_config.rs` that parses `tauri.conf.json` and asserts `bundle.targets == "nsis"`, `installMode == "currentUser"`, `installerHooks == "windows/hooks.nsh"`, and that the hook text contains both `CreateShortCut "$DESKTOP\\漫畫書庫.lnk" "$INSTDIR\\manga-shelf.exe"` and `Delete "$DESKTOP\\漫畫書庫.lnk"`.
-
-- [ ] **Step 2: Run the targeted RED**
-
-Run: `cargo test --manifest-path src-tauri/Cargo.toml --test installer_config`
-
-Expected: FAIL because `src-tauri/windows/hooks.nsh` and `installerHooks` do not exist.
-
-- [ ] **Step 3: Add the minimal NSIS hook and configuration**
+- [ ] **Step 1: Add the minimal NSIS hook and configuration**
 
 ```nsh
 !macro NSIS_HOOK_POSTINSTALL
@@ -55,16 +44,20 @@ Expected: FAIL because `src-tauri/windows/hooks.nsh` and `installerHooks` do not
 
 Set `bundle.windows.nsis.installerHooks` to `windows/hooks.nsh` without changing `currentUser`.
 
-- [ ] **Step 4: Run GREEN and preserve the existing installer contract**
+- [ ] **Step 2: Validate configuration and build a real installer**
 
-Run: `cargo test --manifest-path src-tauri/Cargo.toml --test installer_config`
+Parse `tauri.conf.json`, run `cargo fmt --check`, and build an NSIS bundle. Configuration is treated as the approved TDD exception; source-text assertions are forbidden because they do not prove installer behavior.
 
-Expected: PASS.
+Expected: JSON/schema validation and NSIS build PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Verify the real shortcut behavior**
+
+With action-time confirmation, install the bundle for the current user. Resolve `%USERPROFILE%\\Desktop\\漫畫書庫.lnk` and assert its target is the installed `manga-shelf.exe`; launch from the shortcut once. Uninstall behavior is verified only in a disposable/manual acceptance run so existing user data is never deleted for a test.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add src-tauri/windows/hooks.nsh src-tauri/tests/installer_config.rs src-tauri/tauri.conf.json
+git add src-tauri/windows/hooks.nsh src-tauri/tauri.conf.json
 git commit -m "feat: add Manga Library desktop shortcut"
 ```
 
@@ -275,30 +268,21 @@ git commit -m "feat: show safe in-app updates"
 - Consumes: GitHub latest endpoint and a newly generated Tauri updater public key.
 - Produces: signed updater artifacts and only the updater/process permissions required by the main window.
 
-- [ ] **Step 1: Extend the existing installer configuration test**
-
-Assert `createUpdaterArtifacts === true`, endpoint exactly matches the Global Constraint, `windows.installMode === "passive"`, the public key is non-empty and is not a file path, and capabilities contain `updater:default` plus `process:allow-restart` but not `process:allow-exit`.
-
-- [ ] **Step 2: Run configuration RED**
-
-Run: `cargo test --manifest-path src-tauri/Cargo.toml --test installer_config`
-
-Expected: FAIL because updater configuration and plugins do not exist.
-
-- [ ] **Step 3: Generate signing keys outside Git**
+- [ ] **Step 1: Generate signing keys outside Git**
 
 Run `pnpm tauri signer generate -w "$env:USERPROFILE\\.tauri\\manga-library.key"`, use a strong user-provided password, verify the private key path is outside the repository, and securely record a separate backup. Copy only the emitted public key into `tauri.conf.json`.
 
-- [ ] **Step 4: Configure updater/runtime**
+- [ ] **Step 2: Configure updater/runtime**
 
 Add Rust dependencies `tauri-plugin-updater = "2"` and `tauri-plugin-process = "2"`; initialize both plugins before setup. Add the two JavaScript dependencies from Task 3, set version `0.2.0` consistently in all three manifests, enable updater artifacts, add the exact endpoint and `passive` mode, and grant only required capabilities.
 
-- [ ] **Step 5: Run configuration GREEN and complete local verification**
+- [ ] **Step 3: Validate configuration and complete local verification**
+
+Parse the exact JSON values, validate the Tauri configuration through a real build/check, and inspect generated capability schemas. Configuration is treated as the approved TDD exception; real updater behavior is covered by Tasks 3, 4 and 7.
 
 Run:
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --test installer_config
 pnpm test
 pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml
@@ -308,7 +292,7 @@ cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/lib.rs src-tauri/capabilities/default.json src-tauri/tauri.conf.json package.json
@@ -327,34 +311,22 @@ git commit -m "feat: enable signed desktop updates"
 - Consumes: Git tag `v0.2.0`, `TAURI_SIGNING_PRIVATE_KEY`, and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` repository secrets.
 - Produces: public GitHub Release containing NSIS setup, signature, and `latest.json` for `windows-x86_64`.
 
-- [ ] **Step 1: Add a release workflow contract test**
-
-Extend `installer_config.rs` to read `.github/workflows/release.yml` and assert it is limited to `v*` tags, runs on `windows-latest`, executes `pnpm test`, `pnpm build`, `cargo test`, `cargo check`, and uses `tauri-apps/tauri-action@v0` with `updaterJsonPreferNsis: true` and the two signing secrets.
-
-- [ ] **Step 2: Run workflow RED**
-
-Run: `cargo test --manifest-path src-tauri/Cargo.toml --test installer_config`
-
-Expected: FAIL because `release.yml` does not exist.
-
-- [ ] **Step 3: Add the minimal release workflow**
+- [ ] **Step 1: Add the minimal release workflow**
 
 Use `actions/checkout@v4`, `pnpm/action-setup@v4`, `actions/setup-node@v4`, `dtolnay/rust-toolchain@stable`, and `tauri-apps/tauri-action@v0`. Set Node 24, pnpm 10, cache pnpm, run the full verification commands before publishing, and pass the signing secrets only to the Tauri build step.
 
-- [ ] **Step 4: Document the user-facing workflow**
+- [ ] **Step 2: Document the user-facing workflow**
 
 README must explain: install `0.2.0` once, launch from desktop, future updates appear inside the app, data remains local, and the first unsigned install may trigger SmartScreen.
 
-- [ ] **Step 5: Run local workflow-contract GREEN**
+- [ ] **Step 3: Validate with GitHub Actions**
 
-Run: `cargo test --manifest-path src-tauri/Cargo.toml --test installer_config`
+Push a non-release branch first and validate GitHub parses the workflow. The tag run in Task 7 must execute every declared command and publish the real assets. Workflow configuration is treated as the approved TDD exception; source-text assertions are forbidden.
 
-Expected: PASS.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add .github/workflows/release.yml README.md src-tauri/tests/installer_config.rs
+git add .github/workflows/release.yml README.md
 git commit -m "ci: publish signed Manga Library updates"
 ```
 
