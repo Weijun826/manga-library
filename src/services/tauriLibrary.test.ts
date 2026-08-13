@@ -187,6 +187,48 @@ describe("tauriLibrary", () => {
     });
   });
 
+  it("maps updateSeriesMetadata with the series ID and metadata input", async () => {
+    const input = {
+      title: "海風冒險譚 新版",
+      originalTitle: null,
+      description: "更新後簡介",
+      publicationStatus: "ongoing" as const,
+      author: "新作者",
+      editionId: "edition-1",
+      editionName: "續刊單行本",
+      publisher: "新出版社",
+    };
+    invokeMock.mockResolvedValue(seriesDetailFixture);
+
+    await expect(tauriLibrary.updateSeriesMetadata("series-1", input)).resolves.toBe(
+      seriesDetailFixture,
+    );
+
+    expect(invokeMock).toHaveBeenCalledOnce();
+    expect(invokeMock).toHaveBeenCalledWith("update_series_metadata", {
+      seriesId: "series-1",
+      input,
+    });
+  });
+
+  it("maps addVolume with the edition ID and new volume input", async () => {
+    const input = {
+      displayLabel: "11",
+      isbn: "9784088833163",
+      availabilityStatus: "released" as const,
+      collection: collectionFixture,
+    };
+    invokeMock.mockResolvedValue(volumeFixture);
+
+    await expect(tauriLibrary.addVolume("edition-1", input)).resolves.toBe(volumeFixture);
+
+    expect(invokeMock).toHaveBeenCalledOnce();
+    expect(invokeMock).toHaveBeenCalledWith("add_volume", {
+      editionId: "edition-1",
+      input,
+    });
+  });
+
   it("maps updateCollectionItem with the volume ID and partial patch", async () => {
     const patch: CollectionItemPatch = {
       isOwned: true,

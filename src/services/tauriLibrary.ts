@@ -28,6 +28,14 @@ export const tauriLibrary: LibraryPort = {
     return invoke<SeriesDetail>("create_series_batch", { input });
   },
 
+  updateSeriesMetadata(seriesId, input) {
+    return invoke<SeriesDetail>("update_series_metadata", { seriesId, input });
+  },
+
+  addVolume(editionId, input) {
+    return invoke<VolumeWithCollection>("add_volume", { editionId, input });
+  },
+
   updateCollectionItem(volumeId, patch) {
     return invoke<VolumeWithCollection>("update_collection_item", { volumeId, patch });
   },

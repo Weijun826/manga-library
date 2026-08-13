@@ -465,6 +465,28 @@ pub struct CreateVolumeInput {
     pub provenance: BTreeMap<String, MetadataSource>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSeriesMetadataInput {
+    pub title: String,
+    pub original_title: Option<String>,
+    pub description: Option<String>,
+    pub publication_status: PublicationStatus,
+    pub author: String,
+    pub edition_id: String,
+    pub edition_name: String,
+    pub publisher: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddVolumeInput {
+    pub display_label: String,
+    pub isbn: Option<String>,
+    pub availability_status: AvailabilityStatus,
+    pub collection: CollectionItemView,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionItemPatch {

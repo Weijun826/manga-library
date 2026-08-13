@@ -2,15 +2,148 @@ use std::collections::{BTreeMap, HashSet};
 
 use manga_shelf_lib::db::{
     models::{
-        AvailabilityStatus, BookCondition, CollectionItemPatch, CollectionItemView,
+        AddVolumeInput, AvailabilityStatus, BookCondition, CollectionItemPatch, CollectionItemView,
         CompletionFilter, ContributorInput, ContributorRole, CreateEditionInput,
         CreateSeriesBatchInput, CreateSeriesInput, CreateVolumeInput, DatePrecision, EditionFormat,
         MetadataSource, PublicationStatus, PublicationStatusFilter, SeriesDetail, SeriesFilter,
+        UpdateSeriesMetadataInput,
     },
     repository, Database,
 };
 use rusqlite::{params, Transaction};
 use uuid::{Uuid, Version};
+
+#[test]
+fn repository_update_series_metadata_preserves_volume_and_collection_identity() {
+    let db = Database::in_memory().expect("database");
+    let created = repository::create_series_batch(&db, ten_volume_batch()).expect("create series");
+    let original_volume_id = created.editions[0].volumes[0].id.clone();
+    let original_collection = created.editions[0].volumes[0].collection.clone();
+
+    let updated = repository::update_series_metadata(
+        &db,
+        &created.id,
+        UpdateSeriesMetadataInput {
+            title: "海風冒險譚 新版".to_string(),
+            original_title: None,
+            description: Some("更新後簡介".to_string()),
+            publication_status: PublicationStatus::Ongoing,
+            author: "新作者".to_string(),
+            edition_id: created.editions[0].id.clone(),
+            edition_name: "續刊單行本".to_string(),
+            publisher: "新出版社".to_string(),
+        },
+    )
+    .expect("update metadata");
+
+    assert_eq!(updated.title, "海風冒險譚 新版");
+    assert_eq!(updated.original_title, None);
+    assert_eq!(updated.description.as_deref(), Some("更新後簡介"));
+    assert_eq!(updated.contributors[0].name, "新作者");
+    assert_eq!(updated.editions[0].name, "續刊單行本");
+    assert_eq!(updated.editions[0].publisher, "新出版社");
+    assert_eq!(updated.editions[0].volumes[0].id, original_volume_id);
+    assert_eq!(
+        updated.editions[0].volumes[0].collection,
+        original_collection
+    );
+}
+
+#[test]
+fn repository_update_series_metadata_rejects_empty_required_fields_without_partial_changes() {
+    let db = Database::in_memory().expect("database");
+    let created = repository::create_series_batch(&db, ten_volume_batch()).expect("create series");
+
+    let error = repository::update_series_metadata(
+        &db,
+        &created.id,
+        UpdateSeriesMetadataInput {
+            title: "已改但不該保存".to_string(),
+            original_title: None,
+            description: None,
+            publication_status: PublicationStatus::Ongoing,
+            author: "   ".to_string(),
+            edition_id: created.editions[0].id.clone(),
+            edition_name: "單行本".to_string(),
+            publisher: "出版社".to_string(),
+        },
+    )
+    .expect_err("empty author must fail");
+
+    assert_eq!(error.code, "invalid_series_metadata");
+    let unchanged = repository::get_series_detail(&db, &created.id).expect("read unchanged series");
+    assert_eq!(unchanged.title, created.title);
+    assert_eq!(unchanged.contributors[0].name, "測試作者");
+}
+
+#[test]
+fn repository_add_volume_supports_numeric_and_special_labels_and_enforces_boundaries() {
+    let db = Database::in_memory().expect("database");
+    let created = repository::create_series_batch(&db, ten_volume_batch()).expect("create series");
+    let edition_id = &created.editions[0].id;
+
+    let numeric = repository::add_volume(
+        &db,
+        edition_id,
+        AddVolumeInput {
+            display_label: "11".to_string(),
+            isbn: Some("978-4-08-883316-3".to_string()),
+            availability_status: AvailabilityStatus::Released,
+            collection: CollectionItemView {
+                is_owned: true,
+                is_wishlisted: true,
+                ..empty_collection()
+            },
+        },
+    )
+    .expect("add numeric volume");
+    let special = repository::add_volume(
+        &db,
+        edition_id,
+        AddVolumeInput {
+            display_label: "外傳".to_string(),
+            isbn: None,
+            availability_status: AvailabilityStatus::Upcoming,
+            collection: empty_collection(),
+        },
+    )
+    .expect("add special volume");
+
+    assert_eq!(numeric.sort_key, "0:000011.000");
+    assert_eq!(numeric.isbn_13.as_deref(), Some("9784088833163"));
+    assert!(numeric.collection.is_owned);
+    assert!(!numeric.collection.is_wishlisted);
+    assert_eq!(special.sort_key, "9:外傳");
+
+    let duplicate_label = repository::add_volume(
+        &db,
+        edition_id,
+        AddVolumeInput {
+            display_label: "11".to_string(),
+            isbn: None,
+            availability_status: AvailabilityStatus::Unknown,
+            collection: empty_collection(),
+        },
+    )
+    .expect_err("duplicate label must fail");
+    assert_eq!(duplicate_label.code, "volume_already_exists");
+
+    let duplicate_isbn = repository::add_volume(
+        &db,
+        edition_id,
+        AddVolumeInput {
+            display_label: "12.5".to_string(),
+            isbn: Some("9784088833163".to_string()),
+            availability_status: AvailabilityStatus::Released,
+            collection: empty_collection(),
+        },
+    )
+    .expect_err("duplicate ISBN must fail");
+    assert_eq!(duplicate_isbn.code, "isbn_already_exists");
+
+    let detail = repository::get_series_detail(&db, &created.id).expect("read updated series");
+    assert_eq!(detail.known_volume_count, 12);
+}
 
 #[test]
 fn repository_list_series_finds_a_series_by_contributor_name() {

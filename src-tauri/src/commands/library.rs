@@ -3,8 +3,9 @@ use tauri::State;
 use crate::{
     db::{
         models::{
-            CollectionItemPatch, CreateSeriesBatchInput, DashboardSummary, SeriesDetail,
-            SeriesFilter, SeriesSummary, VolumeWithCollection,
+            AddVolumeInput, CollectionItemPatch, CreateSeriesBatchInput, DashboardSummary,
+            SeriesDetail, SeriesFilter, SeriesSummary, UpdateSeriesMetadataInput,
+            VolumeWithCollection,
         },
         repository, Database,
     },
@@ -43,6 +44,27 @@ pub async fn create_series_batch(
 ) -> Result<SeriesDetail, AppError> {
     let database = database_handle(state);
     run_database_operation(move || repository::create_series_batch(&database, input)).await
+}
+
+#[tauri::command]
+pub async fn update_series_metadata(
+    state: State<'_, AppState>,
+    series_id: String,
+    input: UpdateSeriesMetadataInput,
+) -> Result<SeriesDetail, AppError> {
+    let database = database_handle(state);
+    run_database_operation(move || repository::update_series_metadata(&database, &series_id, input))
+        .await
+}
+
+#[tauri::command]
+pub async fn add_volume(
+    state: State<'_, AppState>,
+    edition_id: String,
+    input: AddVolumeInput,
+) -> Result<VolumeWithCollection, AppError> {
+    let database = database_handle(state);
+    run_database_operation(move || repository::add_volume(&database, &edition_id, input)).await
 }
 
 #[tauri::command]

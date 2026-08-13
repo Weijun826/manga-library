@@ -37,6 +37,8 @@ pub fn run() {
             commands::library::list_series,
             commands::library::get_series_detail,
             commands::library::create_series_batch,
+            commands::library::update_series_metadata,
+            commands::library::add_volume,
             commands::library::update_collection_item,
             commands::library::find_volume_by_isbn,
             commands::library::delete_series,

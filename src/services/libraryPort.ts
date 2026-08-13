@@ -1,4 +1,5 @@
 import type {
+  AddVolumeInput,
   BackupInfo,
   CollectionItemPatch,
   CoverAsset,
@@ -8,6 +9,7 @@ import type {
   SeriesDetail,
   SeriesFilter,
   SeriesSummary,
+  UpdateSeriesMetadataInput,
   VolumeWithCollection,
 } from "../domain/model";
 
@@ -16,6 +18,11 @@ export interface LibraryPort {
   listSeries(filter: SeriesFilter): Promise<SeriesSummary[]>;
   getSeriesDetail(seriesId: string): Promise<SeriesDetail>;
   createSeriesBatch(input: CreateSeriesBatchInput): Promise<SeriesDetail>;
+  updateSeriesMetadata(
+    seriesId: string,
+    input: UpdateSeriesMetadataInput,
+  ): Promise<SeriesDetail>;
+  addVolume(editionId: string, input: AddVolumeInput): Promise<VolumeWithCollection>;
   updateCollectionItem(
     volumeId: string,
     patch: CollectionItemPatch,

@@ -136,6 +136,24 @@ export interface CreateSeriesBatchInput {
   }>;
 }
 
+export interface UpdateSeriesMetadataInput {
+  title: string;
+  originalTitle: string | null;
+  description: string | null;
+  publicationStatus: PublicationStatus;
+  author: string;
+  editionId: string;
+  editionName: string;
+  publisher: string;
+}
+
+export interface AddVolumeInput {
+  displayLabel: string;
+  isbn: string | null;
+  availabilityStatus: AvailabilityStatus;
+  collection: CollectionItemView;
+}
+
 export type CollectionItemPatch = Partial<CollectionItemView>;
 
 export interface BackupInfo {

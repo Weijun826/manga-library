@@ -153,6 +153,129 @@ pub fn create_series_batch(
     get_series_detail(database, &series_id)
 }
 
+pub fn update_series_metadata(
+    database: &Database,
+    series_id: &str,
+    input: UpdateSeriesMetadataInput,
+) -> Result<SeriesDetail, AppError> {
+    let title = required_text(&input.title, "invalid_series_metadata")?;
+    let author = required_text(&input.author, "invalid_series_metadata")?;
+    let edition_name = required_text(&input.edition_name, "invalid_series_metadata")?;
+    let publisher = required_text(&input.publisher, "invalid_series_metadata")?;
+    let original_title = optional_text(input.original_title);
+    let description = optional_text(input.description);
+
+    database.with_transaction(|transaction| {
+        let contributor_id: String = transaction.query_row(
+            "SELECT sc.contributor_id FROM series_contributors sc \
+             WHERE sc.series_id = ?1 AND sc.role = 'author' \
+             ORDER BY sc.sort_order, sc.contributor_id LIMIT 1",
+            [series_id],
+            |row| row.get(0),
+        )?;
+        transaction.execute(
+            "UPDATE series SET title = ?2, original_title = ?3, description = ?4, \
+                publication_status = ?5, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
+             WHERE id = ?1",
+            params![
+                series_id,
+                title,
+                original_title,
+                description,
+                input.publication_status.as_str()
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE contributors SET display_name = ?2 WHERE id = ?1",
+            params![contributor_id, author],
+        )?;
+        let updated_edition = transaction.execute(
+            "UPDATE editions SET name = ?3, publisher = ?4, \
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
+             WHERE id = ?1 AND series_id = ?2",
+            params![input.edition_id, series_id, edition_name, publisher],
+        )?;
+        if updated_edition != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(())
+    })?;
+
+    get_series_detail(database, series_id)
+}
+
+pub fn add_volume(
+    database: &Database,
+    edition_id: &str,
+    input: AddVolumeInput,
+) -> Result<VolumeWithCollection, AppError> {
+    let display_label = required_text(&input.display_label, "invalid_volume_label")?;
+    let sort_key = make_volume_sort_key(&display_label)?;
+    let (isbn_10, isbn_13) = match input.isbn.as_deref().map(normalize_isbn) {
+        None => (None, None),
+        Some(isbn) if valid_isbn10(&isbn) => (Some(isbn), None),
+        Some(isbn) if valid_isbn13(&isbn) => (None, Some(isbn)),
+        Some(_) => return Err(AppError::new("invalid_isbn", "The ISBN is not valid.")),
+    };
+
+    let label_exists = database.with_transaction(|transaction| {
+        transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM volumes WHERE edition_id = ?1 AND display_label = ?2)",
+            params![edition_id, display_label],
+            |row| row.get::<_, bool>(0),
+        )
+    })?;
+    if label_exists {
+        return Err(AppError::new(
+            "volume_already_exists",
+            "This volume already exists.",
+        ));
+    }
+    if let Some(isbn) = isbn_10.as_ref().or(isbn_13.as_ref()) {
+        let isbn_exists = database.with_transaction(|transaction| {
+            transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM volumes WHERE isbn_10 = ?1 OR isbn_13 = ?1)",
+                [isbn],
+                |row| row.get::<_, bool>(0),
+            )
+        })?;
+        if isbn_exists {
+            return Err(AppError::new(
+                "isbn_already_exists",
+                "This ISBN already exists.",
+            ));
+        }
+    }
+
+    let volume_id = new_uuid();
+    let collection_id = new_uuid();
+    let collection = enforce_ownership_rule(input.collection);
+    database.with_transaction(|transaction| {
+        transaction.execute(
+            "INSERT INTO volumes (id, edition_id, display_label, sort_key, isbn_10, isbn_13, \
+                availability_status, release_date_precision, metadata_source, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'unknown', 'manual', \
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            params![
+                volume_id,
+                edition_id,
+                display_label,
+                sort_key,
+                isbn_10,
+                isbn_13,
+                input.availability_status.as_str(),
+            ],
+        )?;
+        insert_collection_item(transaction, &collection_id, &volume_id, &collection)?;
+        transaction.execute(
+            "UPDATE editions SET known_volume_count = (SELECT COUNT(*) FROM volumes WHERE edition_id = ?1), \
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            [edition_id],
+        )?;
+        find_volume_by_id_in_transaction(transaction, &volume_id)
+    })
+}
+
 pub fn update_collection_item(
     database: &Database,
     volume_id: &str,
@@ -714,6 +837,87 @@ fn is_normalized_isbn(isbn: &str) -> bool {
         13 => bytes.iter().all(u8::is_ascii_digit),
         _ => false,
     }
+}
+
+fn required_text(value: &str, code: &str) -> Result<String, AppError> {
+    let value = value.trim();
+    if value.is_empty() {
+        Err(AppError::new(code, "A required value is missing."))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+fn optional_text(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let value = value.trim().to_string();
+        (!value.is_empty()).then_some(value)
+    })
+}
+
+fn make_volume_sort_key(label: &str) -> Result<String, AppError> {
+    let parts = label.split('.').collect::<Vec<_>>();
+    let numeric = parts.len() <= 2
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && parts.get(1).is_none_or(|decimal| decimal.len() <= 3);
+    if numeric {
+        let integer = parts[0].trim_start_matches('0');
+        let integer = if integer.is_empty() { "0" } else { integer };
+        if integer.len() > 6 {
+            return Err(AppError::new(
+                "invalid_volume_label",
+                "The volume label is invalid.",
+            ));
+        }
+        let decimal = parts.get(1).copied().unwrap_or("");
+        return Ok(format!("0:{integer:0>6}.{decimal:0<3}"));
+    }
+    Ok(match label {
+        "上" | "下" => format!("1:{label}"),
+        "全一冊" => "2:全一冊".to_string(),
+        _ => format!("9:{label}"),
+    })
+}
+
+fn normalize_isbn(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| *character != ' ' && *character != '-')
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
+fn valid_isbn10(isbn: &str) -> bool {
+    if !is_normalized_isbn(isbn) || isbn.len() != 10 {
+        return false;
+    }
+    isbn.bytes()
+        .enumerate()
+        .map(|(index, byte)| {
+            let value = if byte == b'X' {
+                10
+            } else {
+                u32::from(byte - b'0')
+            };
+            value * (10 - index as u32)
+        })
+        .sum::<u32>()
+        % 11
+        == 0
+}
+
+fn valid_isbn13(isbn: &str) -> bool {
+    is_normalized_isbn(isbn)
+        && isbn.len() == 13
+        && isbn
+            .bytes()
+            .enumerate()
+            .map(|(index, byte)| u32::from(byte - b'0') * if index % 2 == 0 { 1 } else { 3 })
+            .sum::<u32>()
+            % 10
+            == 0
 }
 
 fn escape_like_pattern(value: &str) -> String {
