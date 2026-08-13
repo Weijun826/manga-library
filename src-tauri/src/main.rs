@@ -1,5 +1,5 @@
-// Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// Keep both debug and release desktop bundles independent from a console window.
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 fn main() {
     manga_shelf_lib::run()
