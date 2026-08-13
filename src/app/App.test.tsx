@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type {
   CreateSeriesBatchInput,
@@ -11,6 +11,8 @@ import type {
 } from "../domain/model";
 import type { LibraryPort } from "../services/libraryPort";
 import { App } from "./App";
+
+afterEach(cleanup);
 
 function summary(detail: SeriesDetail): SeriesSummary {
   const volumes = detail.editions.flatMap((edition) => edition.volumes);
