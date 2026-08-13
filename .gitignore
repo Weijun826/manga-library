@@ -1,4 +1,5 @@
 /.worktrees/
+/.superpowers/brainstorm/
 
 # Tauri React build artifacts
 node_modules/
