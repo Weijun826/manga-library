@@ -3,5 +3,6 @@
 # Tauri React build artifacts
 node_modules/
 dist/
+artifacts/
 *.local
 *.tsbuildinfo
