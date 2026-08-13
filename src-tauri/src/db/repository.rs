@@ -1,17 +1,11 @@
-use std::{
-    collections::BTreeMap,
-    process,
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeMap;
 
 use rusqlite::{params, OptionalExtension, Row, Transaction};
+use uuid::Uuid;
 
 use crate::error::AppError;
 
 use super::{models::*, Database};
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 const VOLUME_SELECT: &str = "SELECT \
     v.id, v.edition_id, v.display_label, v.sort_key, v.title_override, \
@@ -46,24 +40,16 @@ pub fn create_series_batch(
     database: &Database,
     input: CreateSeriesBatchInput,
 ) -> Result<SeriesDetail, AppError> {
-    let series_id = next_id("series");
-    let edition_id = next_id("edition");
+    let series_id = new_uuid();
+    let edition_id = new_uuid();
     let contributor_ids = input
         .series
         .contributors
         .iter()
-        .map(|_| next_id("contributor"))
+        .map(|_| new_uuid())
         .collect::<Vec<_>>();
-    let volume_ids = input
-        .volumes
-        .iter()
-        .map(|_| next_id("volume"))
-        .collect::<Vec<_>>();
-    let collection_ids = input
-        .volumes
-        .iter()
-        .map(|_| next_id("collection"))
-        .collect::<Vec<_>>();
+    let volume_ids = input.volumes.iter().map(|_| new_uuid()).collect::<Vec<_>>();
+    let collection_ids = input.volumes.iter().map(|_| new_uuid()).collect::<Vec<_>>();
 
     database.with_transaction(|transaction| {
         transaction.execute(
@@ -172,7 +158,7 @@ pub fn update_collection_item(
     volume_id: &str,
     patch: CollectionItemPatch,
 ) -> Result<VolumeWithCollection, AppError> {
-    let collection_id = next_id("collection");
+    let collection_id = new_uuid();
 
     database.with_transaction(|transaction| {
         let current = find_volume_by_id_in_transaction(transaction, volume_id)?;
@@ -288,7 +274,10 @@ fn get_dashboard_in_transaction(
             collection: CompletionFilter::Incomplete,
             reading: CompletionFilter::All,
         },
-    )?;
+    )?
+    .into_iter()
+    .filter(|series| series.owned_volume_count > 0)
+    .collect();
 
     Ok(DashboardSummary {
         series_count,
@@ -328,6 +317,14 @@ fn list_series_in_transaction(
                 SELECT 1 FROM editions search_edition \
                 WHERE search_edition.series_id = s.id \
                   AND search_edition.publisher LIKE '%' || ?1 || '%' ESCAPE '\\'\
+            ) \
+            OR EXISTS (\
+                SELECT 1 \
+                FROM series_contributors search_series_contributor \
+                JOIN contributors search_contributor \
+                  ON search_contributor.id = search_series_contributor.contributor_id \
+                WHERE search_series_contributor.series_id = s.id \
+                  AND search_contributor.display_name LIKE '%' || ?1 || '%' ESCAPE '\\'\
             )\
          ) \
          AND (?2 = 'all' OR s.publication_status = ?2) \
@@ -734,11 +731,6 @@ fn bool_integer(value: bool) -> i64 {
     }
 }
 
-fn next_id(prefix: &str) -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let sequence = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    format!("{prefix}-{:x}-{nanos:x}-{sequence:x}", process::id())
+fn new_uuid() -> String {
+    Uuid::new_v4().to_string()
 }

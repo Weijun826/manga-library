@@ -1,15 +1,104 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use manga_shelf_lib::db::{
     models::{
         AvailabilityStatus, BookCondition, CollectionItemPatch, CollectionItemView,
         CompletionFilter, ContributorInput, ContributorRole, CreateEditionInput,
         CreateSeriesBatchInput, CreateSeriesInput, CreateVolumeInput, DatePrecision, EditionFormat,
-        MetadataSource, PublicationStatus, PublicationStatusFilter, SeriesFilter,
+        MetadataSource, PublicationStatus, PublicationStatusFilter, SeriesDetail, SeriesFilter,
     },
     repository, Database,
 };
 use rusqlite::{params, Transaction};
+use uuid::{Uuid, Version};
+
+#[test]
+fn repository_list_series_finds_a_series_by_contributor_name() {
+    let db = Database::in_memory().expect("database");
+    let created =
+        repository::create_series_batch(&db, ten_volume_batch()).expect("create series batch");
+
+    let matching = repository::list_series(
+        &db,
+        SeriesFilter {
+            query: "測試作者".to_string(),
+            publication_status: PublicationStatusFilter::All,
+            collection: CompletionFilter::All,
+            reading: CompletionFilter::All,
+        },
+    )
+    .expect("contributor search");
+
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, created.id);
+}
+
+#[test]
+fn repository_create_series_batch_uses_unique_uuid_v4_observable_entity_ids() {
+    let db = Database::in_memory().expect("database");
+    let first =
+        repository::create_series_batch(&db, ten_volume_batch()).expect("first series batch");
+
+    let mut second_input = ten_volume_batch();
+    second_input.series.title = "山海冒險譚".to_string();
+    second_input.series.original_title = Some("Mountain Adventures".to_string());
+    for volume in &mut second_input.volumes {
+        volume.isbn_10 = None;
+        volume.isbn_13 = None;
+    }
+    let second = repository::create_series_batch(&db, second_input).expect("second series batch");
+
+    let first_ids = observable_entity_ids(&first);
+    let second_ids = observable_entity_ids(&second);
+    for id in first_ids.iter().chain(&second_ids) {
+        let parsed = Uuid::parse_str(id).expect("observable entity ID must be a UUID");
+        assert_eq!(parsed.get_version(), Some(Version::Random));
+    }
+
+    let all_ids = first_ids
+        .iter()
+        .chain(&second_ids)
+        .copied()
+        .collect::<Vec<_>>();
+    let unique_ids = all_ids.iter().copied().collect::<HashSet<_>>();
+    assert_eq!(unique_ids.len(), all_ids.len());
+}
+
+#[test]
+fn repository_dashboard_incomplete_series_excludes_zero_owned_but_list_filter_keeps_it() {
+    let db = Database::in_memory().expect("database");
+
+    let mut zero_owned_input = ten_volume_batch();
+    zero_owned_input.series.title = "完全未收藏系列".to_string();
+    zero_owned_input.series.original_title = None;
+    zero_owned_input.edition.publisher = "零收藏出版社".to_string();
+    for volume in &mut zero_owned_input.volumes {
+        volume.isbn_10 = None;
+        volume.isbn_13 = None;
+        volume.collection = empty_collection();
+    }
+    let zero_owned =
+        repository::create_series_batch(&db, zero_owned_input).expect("zero-owned series batch");
+    let partially_owned =
+        repository::create_series_batch(&db, ten_volume_batch()).expect("partial series batch");
+
+    let dashboard = repository::get_dashboard(&db).expect("dashboard");
+    assert_eq!(dashboard.incomplete_series.len(), 1);
+    assert_eq!(dashboard.incomplete_series[0].id, partially_owned.id);
+
+    let general_incomplete = repository::list_series(
+        &db,
+        SeriesFilter {
+            query: "完全未收藏系列".to_string(),
+            publication_status: PublicationStatusFilter::All,
+            collection: CompletionFilter::Incomplete,
+            reading: CompletionFilter::All,
+        },
+    )
+    .expect("general incomplete collection filter");
+    assert_eq!(general_incomplete.len(), 1);
+    assert_eq!(general_incomplete[0].id, zero_owned.id);
+}
 
 #[test]
 fn repository_ten_volume_batch_tracks_missing_volumes_and_ownership_updates() {
@@ -397,6 +486,15 @@ fn ten_volume_batch() -> CreateSeriesBatchInput {
             })
             .collect(),
     }
+}
+
+fn observable_entity_ids(detail: &SeriesDetail) -> Vec<&str> {
+    let mut ids = vec![detail.id.as_str()];
+    for edition in &detail.editions {
+        ids.push(edition.id.as_str());
+        ids.extend(edition.volumes.iter().map(|volume| volume.id.as_str()));
+    }
+    ids
 }
 
 fn owned_collection(is_read: bool, volume_number: i32) -> CollectionItemView {
