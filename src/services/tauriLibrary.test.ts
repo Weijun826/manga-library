@@ -300,23 +300,28 @@ describe("tauriLibrary", () => {
     });
   });
 
-  it("maps importCover with a camelCase source path", async () => {
+  it("maps setSeriesCover with series ID and local source path", async () => {
     invokeMock.mockResolvedValue(coverFixture);
 
-    await expect(tauriLibrary.importCover("D:/Covers/cover.webp")).resolves.toBe(coverFixture);
+    await expect(
+      tauriLibrary.setSeriesCover("series-1", "D:/Covers/cover.webp"),
+    ).resolves.toBe(coverFixture);
 
     expect(invokeMock).toHaveBeenCalledOnce();
-    expect(invokeMock).toHaveBeenCalledWith("import_cover", {
+    expect(invokeMock).toHaveBeenCalledWith("set_series_cover", {
+      seriesId: "series-1",
       sourcePath: "D:/Covers/cover.webp",
     });
   });
 
-  it("maps clearUnusedCoverCache and returns the deletion count", async () => {
-    invokeMock.mockResolvedValue(3);
+  it("maps removeSeriesCover and resolves void", async () => {
+    invokeMock.mockResolvedValue(undefined);
 
-    await expect(tauriLibrary.clearUnusedCoverCache()).resolves.toBe(3);
+    await expect(tauriLibrary.removeSeriesCover("series-1")).resolves.toBeUndefined();
 
     expect(invokeMock).toHaveBeenCalledOnce();
-    expect(invokeMock).toHaveBeenCalledWith("clear_unused_cover_cache");
+    expect(invokeMock).toHaveBeenCalledWith("remove_series_cover_command", {
+      seriesId: "series-1",
+    });
   });
 });

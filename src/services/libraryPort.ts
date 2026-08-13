@@ -31,6 +31,6 @@ export interface LibraryPort {
   deleteSeries(seriesId: string): Promise<void>;
   exportBackup(destination: string): Promise<BackupInfo>;
   restoreBackup(source: string): Promise<RestoreResult>;
-  importCover(sourcePath: string): Promise<CoverAsset>;
-  clearUnusedCoverCache(): Promise<number>;
+  setSeriesCover(seriesId: string, sourcePath: string): Promise<CoverAsset>;
+  removeSeriesCover(seriesId: string): Promise<void>;
 }

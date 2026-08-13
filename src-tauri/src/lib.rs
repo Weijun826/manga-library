@@ -14,6 +14,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_directory = app.path().app_data_dir().map_err(|_| {
                 error::AppError::new(
@@ -33,6 +34,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::backup::prepare_update_backup,
+            commands::cover::set_series_cover,
+            commands::cover::remove_series_cover_command,
             commands::library::get_dashboard,
             commands::library::list_series,
             commands::library::get_series_detail,

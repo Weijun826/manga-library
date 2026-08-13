@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 
 import { TextCover } from "../components/TextCover";
+import { SeriesCover } from "../components/SeriesCover";
+import { EditSeriesView } from "../components/EditSeriesView";
+import { AddVolumeView } from "../components/AddVolumeView";
 import { UpdateStatus } from "../components/UpdateStatus";
 import { makeVolumeSortKey } from "../domain/volumeOrder";
 import type {
@@ -13,14 +16,17 @@ import type {
   SeriesDetail,
   SeriesSummary,
   VolumeWithCollection,
+  UpdateSeriesMetadataInput,
+  AddVolumeInput,
 } from "../domain/model";
+import { selectCoverImage } from "../services/coverPicker";
 import type { LibraryPort } from "../services/libraryPort";
 import { tauriLibrary } from "../services/tauriLibrary";
 import { tauriUpdateService } from "../services/tauriUpdateService";
 import type { UpdatePort } from "../services/updatePort";
 import "./App.css";
 
-type Screen = "dashboard" | "library" | "detail" | "add";
+type Screen = "dashboard" | "library" | "detail" | "add" | "edit" | "addVolume";
 type LoadState<T> = { status: "loading" | "ready" | "error"; data: T | null; error?: string };
 
 const initialCollection: CollectionItemView = {
@@ -233,6 +239,37 @@ export function App({
     }
   }
 
+  async function saveMetadata(input: UpdateSeriesMetadataInput) {
+    if (!selectedId) return;
+    setIsSubmitting(true);
+    try { const updated = await library.updateSeriesMetadata(selectedId, input); setDetail({ status: "ready", data: updated }); setScreen("detail"); void loadDashboard(); }
+    catch { setDetail((current) => ({ ...current, error: friendlyError() })); }
+    finally { setIsSubmitting(false); }
+  }
+
+  async function chooseCover() {
+    if (!selectedId) return;
+    const path = await selectCoverImage(); if (!path) return;
+    setIsSubmitting(true);
+    try { const cover = await library.setSeriesCover(selectedId, path); setDetail((current) => current.data ? { status: "ready", data: { ...current.data, representativeCover: cover } } : current); }
+    catch { setDetail((current) => ({ ...current, error: "封面無法使用，請選擇 10 MiB 內的 JPG、PNG 或 WebP。" })); }
+    finally { setIsSubmitting(false); }
+  }
+
+  async function removeCover() {
+    if (!selectedId) return;
+    await library.removeSeriesCover(selectedId);
+    setDetail((current) => current.data ? { status: "ready", data: { ...current.data, representativeCover: null } } : current);
+  }
+
+  async function saveVolume(input: AddVolumeInput) {
+    const edition = detail.data?.editions[0]; if (!edition || !selectedId) return;
+    setIsSubmitting(true);
+    try { await library.addVolume(edition.id, input); await loadDetail(selectedId); setScreen("detail"); void loadDashboard(); }
+    catch { setDetail((current) => ({ ...current, error: "無法新增卷冊，請檢查卷數或 ISBN 是否重複。" })); }
+    finally { setIsSubmitting(false); }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="主要導覽">
@@ -247,7 +284,9 @@ export function App({
       <section className="workspace">
         {screen === "dashboard" && <DashboardView state={dashboard} onRetry={loadDashboard} onAdd={() => setScreen("add")} onOpen={openDetail} />}
         {screen === "library" && <LibraryView state={series} query={query} onQueryChange={setQuery} onRetry={loadSeries} onOpen={openDetail} onAdd={() => setScreen("add")} />}
-        {screen === "detail" && <DetailView state={detail} onRetry={() => selectedId && loadDetail(selectedId)} onBack={goToLibrary} onUpdate={updateCollection} updatingVolume={updatingVolume} onDelete={() => setDeleteOpen(true)} />}
+        {screen === "detail" && <DetailView state={detail} onRetry={() => selectedId && loadDetail(selectedId)} onBack={goToLibrary} onUpdate={updateCollection} updatingVolume={updatingVolume} onDelete={() => setDeleteOpen(true)} onEdit={() => setScreen("edit")} onAddVolume={() => setScreen("addVolume")} />}
+        {screen === "edit" && detail.data && <EditSeriesView series={detail.data} busy={isSubmitting} onCancel={() => setScreen("detail")} onSave={saveMetadata} onChooseCover={chooseCover} onRemoveCover={removeCover} />}
+        {screen === "addVolume" && detail.data?.editions[0] && <AddVolumeView edition={detail.data.editions[0]} busy={isSubmitting} onCancel={() => setScreen("detail")} onSave={saveVolume} />}
         {screen === "add" && <AddView form={form} errors={formErrors} isSubmitting={isSubmitting} onChange={updateForm} onSubmit={submitForm} onCancel={goToLibrary} />}
       </section>
       {deleteOpen && detail.data && <ConfirmDialog title="刪除這個系列？" description={`「${detail.data.title}」和其冊數紀錄將一併移除。`} isSubmitting={isSubmitting} onCancel={() => setDeleteOpen(false)} onConfirm={deleteSelected} />}
@@ -266,11 +305,11 @@ function LibraryView({ state, query, onQueryChange, onRetry, onOpen, onAdd }: { 
   return <div className="page"><header className="page-heading compact"><div><p className="eyebrow">我的漫畫</p><h1>所有系列</h1></div><button className="primary" onClick={onAdd}>新增漫畫</button></header><label className="search"><span>搜尋</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜尋標題或作者" /></label>{state.status === "loading" ? <Loading label="正在讀取漫畫…" /> : state.status === "error" || !state.data ? <ErrorState onRetry={onRetry} /> : state.data.length === 0 ? <EmptyState onAdd={onAdd} title={query ? "找不到符合的漫畫" : undefined} /> : <div className="series-grid">{state.data.map((item) => <SeriesCard key={item.id} series={item} onOpen={onOpen} />)}</div>}</div>;
 }
 
-function DetailView({ state, onRetry, onBack, onUpdate, updatingVolume, onDelete }: { state: LoadState<SeriesDetail>; onRetry: () => void; onBack: () => void; onUpdate: (volume: VolumeWithCollection, flag: "isOwned" | "isRead" | "isWishlisted") => void; updatingVolume: string | null; onDelete: () => void }) {
+function DetailView({ state, onRetry, onBack, onUpdate, updatingVolume, onDelete, onEdit, onAddVolume }: { state: LoadState<SeriesDetail>; onRetry: () => void; onBack: () => void; onUpdate: (volume: VolumeWithCollection, flag: "isOwned" | "isRead" | "isWishlisted") => void; updatingVolume: string | null; onDelete: () => void; onEdit: () => void; onAddVolume: () => void }) {
   if (state.status === "loading") return <Loading label="正在開啟系列…" />;
   if (state.status === "error" || !state.data) return <ErrorState onRetry={onRetry} />;
   const series = state.data;
-  return <div className="page"><button className="back" onClick={onBack}>← 回到我的漫畫</button><header className="detail-head"><TextCover title={series.title} large /><div><p className="eyebrow">{series.publishers.join("、") || "出版社未填寫"}</p><h1>{series.title}</h1><p>{authorText(series)}</p><p className="muted">{summaryText(series)}</p></div><button className="danger ghost" onClick={onDelete}>刪除系列</button></header>{state.error && <p className="form-error" role="alert">{state.error}</p>}{series.description && <p className="description">{series.description}</p>}{series.editions.map((edition) => <section className="edition" key={edition.id}><div className="edition-head"><div><h2>{edition.name}</h2><p>{edition.publisher} · {edition.volumes.length} 冊</p></div></div><div className="volume-list">{edition.volumes.map((volume) => <article className="volume-row" key={volume.id}><span className="volume-number">{volume.displayLabel}</span><div className="volume-actions"><Toggle label="擁有" pressed={volume.collection.isOwned} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isOwned")} /><Toggle label="已讀" pressed={volume.collection.isRead} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isRead")} /><Toggle label="願望" pressed={volume.collection.isWishlisted} disabled={updatingVolume === volume.id || volume.collection.isOwned} onClick={() => onUpdate(volume, "isWishlisted")} /></div></article>)}</div></section>)}</div>;
+  return <div className="page"><button className="back" onClick={onBack}>← 回到我的漫畫</button><header className="detail-head"><SeriesCover cover={series.representativeCover} title={series.title} large /><div><p className="eyebrow">{series.publishers.join("、") || "出版社未填寫"}</p><h1>{series.title}</h1><p>{authorText(series)}</p><p className="muted">{summaryText(series)}</p></div><div className="detail-buttons"><button className="secondary" onClick={onEdit}>編輯系列</button><button className="danger ghost" onClick={onDelete}>刪除系列</button></div></header>{state.error && <p className="form-error" role="alert">{state.error}</p>}{series.description && <p className="description">{series.description}</p>}{series.editions.map((edition) => <section className="edition" key={edition.id}><div className="edition-head"><div><h2>{edition.name}</h2><p>{edition.publisher} · {edition.volumes.length} 冊</p></div><button className="primary" onClick={onAddVolume}>＋ 新增卷冊</button></div><div className="volume-list">{edition.volumes.map((volume) => <article className="volume-row" key={volume.id}><span className="volume-number">{volume.displayLabel}</span><div className="volume-actions"><Toggle label="擁有" pressed={volume.collection.isOwned} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isOwned")} /><Toggle label="已讀" pressed={volume.collection.isRead} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isRead")} /><Toggle label="願望" pressed={volume.collection.isWishlisted} disabled={updatingVolume === volume.id || volume.collection.isOwned} onClick={() => onUpdate(volume, "isWishlisted")} /></div></article>)}</div></section>)}</div>;
 }
 
 function AddView({ form, errors, isSubmitting, onChange, onSubmit, onCancel }: { form: typeof initialForm; errors: Record<string, string>; isSubmitting: boolean; onChange: (field: keyof typeof initialForm, value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCancel: () => void }) {
@@ -278,7 +317,7 @@ function AddView({ form, errors, isSubmitting, onChange, onSubmit, onCancel }: {
 }
 
 function FormField({ label, required, error, children, wide = false }: { label: string; required?: boolean; error?: string; children: ReactNode; wide?: boolean }) { return <label className={wide ? "field wide" : "field"}><span>{label}{required ? " *" : ""}</span>{children}{error && <small className="form-error">{error}</small>}</label>; }
-function SeriesCard({ series, onOpen }: { series: SeriesSummary; onOpen: (id: string) => void }) { return <button className="series-card" onClick={() => onOpen(series.id)}><TextCover title={series.title} /><span className="series-card-body"><strong>{series.title}</strong><span>{authorText(series)} · {series.publishers.join("、") || "出版社未填寫"}</span><small>{summaryText(series)}</small></span></button>; }
+function SeriesCard({ series, onOpen }: { series: SeriesSummary; onOpen: (id: string) => void }) { return <button className="series-card" onClick={() => onOpen(series.id)}><SeriesCover cover={series.representativeCover} title={series.title} /><span className="series-card-body"><strong>{series.title}</strong><span>{authorText(series)} · {series.publishers.join("、") || "出版社未填寫"}</span><small>{summaryText(series)}</small></span></button>; }
 function Stat({ label, value }: { label: string; value: number }) { return <article className="stat"><span>{label}</span><strong>{value}</strong></article>; }
 function Toggle({ label, pressed, disabled, onClick }: { label: string; pressed: boolean; disabled: boolean; onClick: () => void }) { return <button className={pressed ? "toggle selected" : "toggle"} aria-pressed={pressed} disabled={disabled} onClick={onClick}>{label}</button>; }
 function Loading({ label }: { label: string }) { return <div className="state" role="status">{label}</div>; }

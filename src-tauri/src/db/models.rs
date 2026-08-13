@@ -76,6 +76,16 @@ impl_from_db! {
     }
 }
 
+impl CoverMimeType {
+    pub const fn content_type(&self) -> &'static str {
+        match self {
+            Self::Jpeg => "image/jpeg",
+            Self::Png => "image/png",
+            Self::Webp => "image/webp",
+        }
+    }
+}
+
 string_enum! {
     pub enum PublicationStatusFilter {
         All => "all",

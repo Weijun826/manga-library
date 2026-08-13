@@ -276,6 +276,104 @@ pub fn add_volume(
     })
 }
 
+pub fn set_series_cover_asset(
+    database: &Database,
+    series_id: &str,
+    asset_id: &str,
+    relative_path: &str,
+    mime_type: CoverMimeType,
+    byte_size: i64,
+    sha256: &str,
+) -> Result<CoverAsset, AppError> {
+    database.with_transaction(|transaction| {
+        let existing_id = transaction
+            .query_row(
+                "SELECT id FROM cover_assets WHERE sha256 = ?1",
+                [sha256],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let bound_id = existing_id.as_deref().unwrap_or(asset_id);
+        if existing_id.is_none() {
+            transaction.execute(
+                "INSERT INTO cover_assets (id, source_type, relative_path, mime_type, byte_size, sha256, created_at) \
+                 VALUES (?1, 'user_file', ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![asset_id, relative_path, mime_type.content_type(), byte_size, sha256],
+            )?;
+        }
+        if transaction.execute(
+            "UPDATE series SET representative_cover_asset_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            params![series_id, bound_id],
+        )? != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        transaction.query_row(
+            "SELECT id, relative_path, mime_type, byte_size, sha256 FROM cover_assets WHERE id = ?1",
+            [bound_id],
+            |row| {
+                Ok(CoverAsset {
+                    id: row.get(0)?,
+                    relative_path: row.get(1)?,
+                    mime_type: CoverMimeType::from_db(&row.get::<_, String>(2)?)?,
+                    byte_size: row.get(3)?,
+                    sha256: row.get(4)?,
+                })
+            },
+        )
+    })
+}
+
+pub fn clear_series_cover(
+    database: &Database,
+    series_id: &str,
+) -> Result<Option<CoverAsset>, AppError> {
+    database.with_transaction(|transaction| {
+        let asset = transaction
+            .query_row(
+                "SELECT ca.id, ca.relative_path, ca.mime_type, ca.byte_size, ca.sha256 \
+                 FROM series s JOIN cover_assets ca ON ca.id = s.representative_cover_asset_id WHERE s.id = ?1",
+                [series_id],
+                |row| {
+                    Ok(CoverAsset {
+                        id: row.get(0)?,
+                        relative_path: row.get(1)?,
+                        mime_type: CoverMimeType::from_db(&row.get::<_, String>(2)?)?,
+                        byte_size: row.get(3)?,
+                        sha256: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+        if transaction.execute(
+            "UPDATE series SET representative_cover_asset_id = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            [series_id],
+        )? != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok(asset)
+    })
+}
+
+pub fn delete_cover_asset_if_unreferenced(
+    database: &Database,
+    asset_id: &str,
+) -> Result<bool, AppError> {
+    database.with_transaction(|transaction| {
+        let references: i64 = transaction.query_row(
+            "SELECT (SELECT COUNT(*) FROM series WHERE representative_cover_asset_id = ?1) + \
+                    (SELECT COUNT(*) FROM volumes WHERE cover_asset_id = ?1)",
+            [asset_id],
+            |row| row.get(0),
+        )?;
+        if references == 0 {
+            transaction.execute("DELETE FROM cover_assets WHERE id = ?1", [asset_id])?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    })
+}
+
 pub fn update_collection_item(
     database: &Database,
     volume_id: &str,

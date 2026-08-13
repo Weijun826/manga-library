@@ -121,8 +121,8 @@ class MemoryLibrary implements LibraryPort {
   async deleteSeries(seriesId: string): Promise<void> { this.details = this.details.filter((detail) => detail.id !== seriesId); }
   async exportBackup(): Promise<never> { throw new Error("not implemented"); }
   async restoreBackup(): Promise<never> { throw new Error("not implemented"); }
-  async importCover(): Promise<never> { throw new Error("not implemented"); }
-  async clearUnusedCoverCache(): Promise<number> { return 0; }
+  async setSeriesCover(): Promise<never> { throw new Error("not implemented"); }
+  async removeSeriesCover(): Promise<void> {}
 }
 
 describe("App MVP integration", () => {

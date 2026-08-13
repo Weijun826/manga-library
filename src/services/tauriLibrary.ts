@@ -56,11 +56,11 @@ export const tauriLibrary: LibraryPort = {
     return invoke<RestoreResult>("restore_backup", { source });
   },
 
-  importCover(sourcePath) {
-    return invoke<CoverAsset>("import_cover", { sourcePath });
+  setSeriesCover(seriesId, sourcePath) {
+    return invoke<CoverAsset>("set_series_cover", { seriesId, sourcePath });
   },
 
-  clearUnusedCoverCache() {
-    return invoke<number>("clear_unused_cover_cache");
+  removeSeriesCover(seriesId) {
+    return invoke<void>("remove_series_cover_command", { seriesId });
   },
 };
