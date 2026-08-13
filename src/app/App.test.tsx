@@ -10,9 +10,19 @@ import type {
   VolumeWithCollection,
 } from "../domain/model";
 import type { LibraryPort } from "../services/libraryPort";
+import type { UpdatePort } from "../services/updatePort";
 import { App } from "./App";
 
 afterEach(cleanup);
+
+const noUpdateUpdater: UpdatePort = {
+  currentVersion: async () => "0.2.0",
+  check: async () => null,
+};
+
+function renderApp(library: LibraryPort) {
+  return render(<App library={library} updater={noUpdateUpdater} />);
+}
 
 function summary(detail: SeriesDetail): SeriesSummary {
   const volumes = detail.editions.flatMap((edition) => edition.volumes);
@@ -74,7 +84,7 @@ class MemoryLibrary implements LibraryPort {
 describe("App MVP integration", () => {
   it("shows an empty dashboard and offers manual creation", async () => {
     const user = userEvent.setup();
-    render(<App library={new MemoryLibrary()} />);
+    renderApp(new MemoryLibrary());
     expect(await screen.findByRole("heading", { name: "漫畫書庫" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "還沒有漫畫" })).toBeVisible();
     await user.click(screen.getAllByRole("button", { name: "新增漫畫" })[0]);
@@ -83,7 +93,7 @@ describe("App MVP integration", () => {
 
   it("creates volumes manually and opens the returned series detail", async () => {
     const user = userEvent.setup();
-    render(<App library={new MemoryLibrary()} />);
+    renderApp(new MemoryLibrary());
     await screen.findByRole("heading", { name: "還沒有漫畫" });
     await user.click(screen.getAllByRole("button", { name: "新增漫畫" })[0]);
     await user.type(screen.getByLabelText("系列名稱 *"), "手動新漫畫");
@@ -98,7 +108,7 @@ describe("App MVP integration", () => {
 
   it("searches by title and author in the real library view", async () => {
     const user = userEvent.setup();
-    render(<App library={new MemoryLibrary([detailFixture()])} />);
+    renderApp(new MemoryLibrary([detailFixture()]));
     await screen.findByRole("heading", { name: "漫畫書庫" });
     await user.click(screen.getByRole("button", { name: "我的漫畫" }));
     expect(await screen.findByText("測試漫畫")).toBeVisible();
@@ -111,7 +121,7 @@ describe("App MVP integration", () => {
 
   it("opens a series and persists ownership while closing wishlist", async () => {
     const user = userEvent.setup();
-    render(<App library={new MemoryLibrary([detailFixture()])} />);
+    renderApp(new MemoryLibrary([detailFixture()]));
     await screen.findByRole("heading", { name: "漫畫書庫" });
     await user.click(screen.getByRole("button", { name: "我的漫畫" }));
     await user.click(await screen.findByRole("button", { name: /測試漫畫/ }));
@@ -123,7 +133,7 @@ describe("App MVP integration", () => {
 
   it("requires an in-app confirmation before deleting a series", async () => {
     const user = userEvent.setup();
-    render(<App library={new MemoryLibrary([detailFixture()])} />);
+    renderApp(new MemoryLibrary([detailFixture()]));
     await screen.findByRole("heading", { name: "漫畫書庫" });
     await user.click(screen.getByRole("button", { name: "我的漫畫" }));
     await user.click(await screen.findByRole("button", { name: /測試漫畫/ }));

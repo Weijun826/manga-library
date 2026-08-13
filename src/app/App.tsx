@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 
 import { TextCover } from "../components/TextCover";
+import { UpdateStatus } from "../components/UpdateStatus";
 import { makeVolumeSortKey } from "../domain/volumeOrder";
 import type {
   CollectionItemView,
@@ -15,6 +16,8 @@ import type {
 } from "../domain/model";
 import type { LibraryPort } from "../services/libraryPort";
 import { tauriLibrary } from "../services/tauriLibrary";
+import { tauriUpdateService } from "../services/tauriUpdateService";
+import type { UpdatePort } from "../services/updatePort";
 import "./App.css";
 
 type Screen = "dashboard" | "library" | "detail" | "add";
@@ -108,7 +111,13 @@ function createInput(form: typeof initialForm): CreateSeriesBatchInput {
   };
 }
 
-export function App({ library = tauriLibrary }: { library?: LibraryPort }) {
+export function App({
+  library = tauriLibrary,
+  updater = tauriUpdateService,
+}: {
+  library?: LibraryPort;
+  updater?: UpdatePort;
+}) {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [dashboard, setDashboard] = useState<LoadState<DashboardSummary>>({ status: "loading", data: null });
   const [series, setSeries] = useState<LoadState<SeriesSummary[]>>({ status: "loading", data: null });
@@ -233,6 +242,7 @@ export function App({ library = tauriLibrary }: { library?: LibraryPort }) {
           <button className={screen === "library" ? "nav-link active" : "nav-link"} onClick={goToLibrary}>我的漫畫</button>
         </nav>
         <button className="primary add-button" onClick={() => { setFormErrors({}); setScreen("add"); }}>＋ 新增漫畫</button>
+        <UpdateStatus updater={updater} />
       </aside>
       <section className="workspace">
         {screen === "dashboard" && <DashboardView state={dashboard} onRetry={loadDashboard} onAdd={() => setScreen("add")} onOpen={openDetail} />}
