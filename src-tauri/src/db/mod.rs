@@ -1,6 +1,10 @@
 pub mod models;
+pub mod repository;
 
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
@@ -13,8 +17,9 @@ const MIGRATIONS: &[Migration] = &[Migration {
     sql: include_str!("../../migrations/0001_initial.sql"),
 }];
 
+#[derive(Clone)]
 pub struct Database {
-    connection: Mutex<Connection>,
+    connection: Arc<Mutex<Connection>>,
 }
 
 impl Database {
@@ -34,7 +39,7 @@ impl Database {
             .map_err(|_| AppError::database_operation())?;
 
         let database = Self {
-            connection: Mutex::new(connection),
+            connection: Arc::new(Mutex::new(connection)),
         };
         database.apply_migrations()?;
         Ok(database)

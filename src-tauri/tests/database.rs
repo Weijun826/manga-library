@@ -1,5 +1,210 @@
-use manga_shelf_lib::db::Database;
+use std::collections::BTreeMap;
+
+use manga_shelf_lib::db::{
+    models::{
+        AvailabilityStatus, BookCondition, CollectionItemPatch, CollectionItemView,
+        CompletionFilter, ContributorInput, ContributorRole, CreateEditionInput,
+        CreateSeriesBatchInput, CreateSeriesInput, CreateVolumeInput, DatePrecision, EditionFormat,
+        MetadataSource, PublicationStatus, PublicationStatusFilter, SeriesFilter,
+    },
+    repository, Database,
+};
 use rusqlite::{params, Transaction};
+
+#[test]
+fn repository_ten_volume_batch_tracks_missing_volumes_and_ownership_updates() {
+    let db = Database::in_memory().expect("database");
+
+    let created =
+        repository::create_series_batch(&db, ten_volume_batch()).expect("create series batch");
+
+    assert_eq!(created.title, "海風冒險譚");
+    assert_eq!(created.known_volume_count, 10);
+    assert_eq!(created.owned_volume_count, 6);
+    assert_eq!(created.read_volume_count, 2);
+    assert_eq!(created.missing_volume_count, 4);
+    assert_eq!(created.contributors.len(), 1);
+    assert_eq!(created.contributors[0].name, "測試作者");
+    assert_eq!(created.contributors[0].role, ContributorRole::Author);
+    assert_eq!(created.publishers, vec!["東立"]);
+    assert!(created.representative_cover.is_none());
+    assert_eq!(row_count(&db, "metadata_provenance"), 10);
+
+    let dashboard = repository::get_dashboard(&db).expect("dashboard");
+    assert_eq!(dashboard.series_count, 1);
+    assert_eq!(dashboard.owned_volume_count, 6);
+    assert_eq!(dashboard.read_volume_count, 2);
+    assert_eq!(dashboard.missing_volume_count, 4);
+    assert_eq!(dashboard.incomplete_series.len(), 1);
+    assert_eq!(dashboard.incomplete_series[0].id, created.id);
+    assert_eq!(dashboard.incomplete_series[0].missing_volume_count, 4);
+
+    let detail = repository::get_series_detail(&db, &created.id).expect("series detail");
+    let edition = &detail.editions[0];
+    let missing_labels = edition
+        .volumes
+        .iter()
+        .filter(|volume| {
+            volume.availability_status == AvailabilityStatus::Released
+                && !volume.collection.is_owned
+        })
+        .map(|volume| volume.display_label.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(missing_labels, vec!["7", "8", "9", "10"]);
+
+    let volume_seven_id = edition
+        .volumes
+        .iter()
+        .find(|volume| volume.display_label == "7")
+        .expect("volume 7")
+        .id
+        .clone();
+    let updated = repository::update_collection_item(
+        &db,
+        &volume_seven_id,
+        CollectionItemPatch {
+            is_owned: Some(true),
+            ..CollectionItemPatch::default()
+        },
+    )
+    .expect("own volume 7");
+
+    assert!(updated.collection.is_owned);
+    assert!(!updated.collection.is_wishlisted);
+    assert_eq!(updated.collection.purchase_price_amount, None);
+    assert_eq!(updated.collection.condition, BookCondition::Unknown);
+
+    let updated_dashboard = repository::get_dashboard(&db).expect("updated dashboard");
+    assert_eq!(updated_dashboard.owned_volume_count, 7);
+    assert_eq!(updated_dashboard.missing_volume_count, 3);
+
+    let updated_detail =
+        repository::get_series_detail(&db, &created.id).expect("updated series detail");
+    let volume_seven = updated_detail.editions[0]
+        .volumes
+        .iter()
+        .find(|volume| volume.display_label == "7")
+        .expect("updated volume 7");
+    assert_eq!(volume_seven.collection.is_wishlisted, false);
+}
+
+#[test]
+fn repository_left_join_returns_exact_collection_defaults_when_row_is_absent() {
+    let db = Database::in_memory().expect("database");
+    db.with_transaction(|transaction| {
+        seed_edition(
+            transaction,
+            "series-no-collection",
+            "edition-no-collection",
+            "tankobon",
+        )?;
+        insert_volume(
+            transaction,
+            "volume-no-collection",
+            "edition-no-collection",
+            "1",
+            "001",
+            None,
+        )?;
+        transaction.execute(
+            "UPDATE volumes SET availability_status = ?1 WHERE id = ?2",
+            params!["released", "volume-no-collection"],
+        )?;
+        Ok(())
+    })
+    .expect("seed volume without collection row");
+
+    let detail = repository::get_series_detail(&db, "series-no-collection")
+        .expect("series detail with collection defaults");
+    let volume = &detail.editions[0].volumes[0];
+
+    assert_eq!(detail.known_volume_count, 1);
+    assert_eq!(detail.owned_volume_count, 0);
+    assert_eq!(detail.read_volume_count, 0);
+    assert_eq!(detail.missing_volume_count, 1);
+    assert_eq!(volume.collection, empty_collection());
+}
+
+#[test]
+fn repository_find_volume_by_isbn_requires_normalized_input_and_checks_both_columns() {
+    let db = Database::in_memory().expect("database");
+    repository::create_series_batch(&db, ten_volume_batch()).expect("create series batch");
+
+    let by_isbn_10 = repository::find_volume_by_isbn(&db, "080442957X")
+        .expect("normalized ISBN-10 lookup")
+        .expect("ISBN-10 volume");
+    assert_eq!(by_isbn_10.display_label, "1");
+    assert_eq!(by_isbn_10.isbn_10.as_deref(), Some("080442957X"));
+
+    let by_isbn_13 = repository::find_volume_by_isbn(&db, "9789572690017")
+        .expect("normalized ISBN-13 lookup")
+        .expect("ISBN-13 volume");
+    assert_eq!(by_isbn_13.display_label, "2");
+    assert_eq!(by_isbn_13.isbn_13.as_deref(), Some("9789572690017"));
+
+    let unnormalized = repository::find_volume_by_isbn(&db, "978-957-26-9001-7")
+        .expect_err("repository must reject unnormalized ISBN input");
+    assert_eq!(unnormalized.code, "invalid_isbn");
+
+    assert!(repository::find_volume_by_isbn(&db, "9789572690099")
+        .expect("absent normalized ISBN")
+        .is_none());
+}
+
+#[test]
+fn repository_create_series_batch_rolls_back_every_row_when_one_volume_is_invalid() {
+    let db = Database::in_memory().expect("database");
+    let mut input = ten_volume_batch();
+    input.volumes[9].isbn_13 = Some("9789572690017".to_string());
+
+    assert!(repository::create_series_batch(&db, input).is_err());
+    assert_eq!(row_count(&db, "series"), 0);
+    assert_eq!(row_count(&db, "contributors"), 0);
+    assert_eq!(row_count(&db, "editions"), 0);
+    assert_eq!(row_count(&db, "volumes"), 0);
+    assert_eq!(row_count(&db, "collection_items"), 0);
+    assert_eq!(row_count(&db, "metadata_provenance"), 0);
+}
+
+#[test]
+fn repository_list_series_filters_are_parameterized_and_delete_removes_the_series() {
+    let db = Database::in_memory().expect("database");
+    let created =
+        repository::create_series_batch(&db, ten_volume_batch()).expect("create series batch");
+
+    let matching = repository::list_series(
+        &db,
+        SeriesFilter {
+            query: "海風".to_string(),
+            publication_status: PublicationStatusFilter::Completed,
+            collection: CompletionFilter::Incomplete,
+            reading: CompletionFilter::Incomplete,
+        },
+    )
+    .expect("matching series filter");
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, created.id);
+    assert_eq!(matching[0].missing_volume_count, 4);
+
+    let injection_text = repository::list_series(
+        &db,
+        SeriesFilter {
+            query: "' OR 1=1 --".to_string(),
+            publication_status: PublicationStatusFilter::All,
+            collection: CompletionFilter::All,
+            reading: CompletionFilter::All,
+        },
+    )
+    .expect("parameterized text filter");
+    assert!(injection_text.is_empty());
+
+    repository::delete_series(&db, &created.id).expect("delete series");
+    assert_eq!(row_count(&db, "series"), 0);
+    assert_eq!(row_count(&db, "editions"), 0);
+    assert_eq!(row_count(&db, "volumes"), 0);
+    assert_eq!(row_count(&db, "collection_items"), 0);
+    assert_eq!(row_count(&db, "metadata_provenance"), 0);
+}
 
 #[test]
 fn migration_creates_schema_and_enforces_foreign_keys() {
@@ -143,6 +348,83 @@ fn serialized_database_error_does_not_reveal_sql() {
             "message": "The database operation failed."
         })
     );
+}
+
+fn ten_volume_batch() -> CreateSeriesBatchInput {
+    CreateSeriesBatchInput {
+        series: CreateSeriesInput {
+            title: "海風冒險譚".to_string(),
+            original_title: Some("Sea Breeze Adventures".to_string()),
+            description: Some("十冊驗收資料".to_string()),
+            publication_status: PublicationStatus::Completed,
+            contributors: vec![ContributorInput {
+                name: "測試作者".to_string(),
+                role: ContributorRole::Author,
+                sort_order: 0,
+            }],
+        },
+        edition: CreateEditionInput {
+            name: "台灣單行本".to_string(),
+            language_code: "zh-Hant".to_string(),
+            region_code: "TW".to_string(),
+            publisher: "東立".to_string(),
+            format: EditionFormat::Tankobon,
+            release_status: PublicationStatus::Completed,
+            known_volume_count: Some(10),
+        },
+        volumes: (1..=10)
+            .map(|number| CreateVolumeInput {
+                display_label: number.to_string(),
+                sort_key: format!("0:{number:06}.000"),
+                title_override: None,
+                isbn_10: (number == 1).then(|| "080442957X".to_string()),
+                isbn_13: (number == 2).then(|| "9789572690017".to_string()),
+                translator: Some("測試譯者".to_string()),
+                availability_status: AvailabilityStatus::Released,
+                release_date: Some(format!("2026-{number:02}-01")),
+                release_date_precision: DatePrecision::Day,
+                list_price_amount: Some(120),
+                list_price_currency: Some("TWD".to_string()),
+                collection: if number <= 6 {
+                    owned_collection(number <= 2, number)
+                } else {
+                    CollectionItemView {
+                        is_wishlisted: number == 7,
+                        ..empty_collection()
+                    }
+                },
+                provenance: BTreeMap::from([("displayLabel".to_string(), MetadataSource::Manual)]),
+            })
+            .collect(),
+    }
+}
+
+fn owned_collection(is_read: bool, volume_number: i32) -> CollectionItemView {
+    CollectionItemView {
+        is_owned: true,
+        is_read,
+        is_wishlisted: false,
+        purchase_price_amount: Some(100 + i64::from(volume_number)),
+        purchase_price_currency: Some("TWD".to_string()),
+        acquired_on: Some(format!("2026-07-{volume_number:02}")),
+        condition: BookCondition::Good,
+        storage_location: Some("書櫃 A".to_string()),
+        notes: Some(format!("第 {volume_number} 冊")),
+    }
+}
+
+fn empty_collection() -> CollectionItemView {
+    CollectionItemView {
+        is_owned: false,
+        is_read: false,
+        is_wishlisted: false,
+        purchase_price_amount: None,
+        purchase_price_currency: None,
+        acquired_on: None,
+        condition: BookCondition::Unknown,
+        storage_location: None,
+        notes: None,
+    }
 }
 
 fn seed_edition(
