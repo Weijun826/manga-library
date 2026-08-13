@@ -1,1 +1,7 @@
 /.worktrees/
+
+# Tauri React build artifacts
+node_modules/
+dist/
+*.local
+*.tsbuildinfo
