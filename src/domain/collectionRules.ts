@@ -20,7 +20,7 @@ export function isMissingVolume(volume: VolumeWithCollection): boolean {
 
 export function summarizeEdition(volumes: VolumeWithCollection[]) {
   return {
-    known: volumes.filter((volume) => volume.availabilityStatus !== "unknown").length,
+    known: volumes.length,
     released: volumes.filter((volume) => volume.availabilityStatus === "released").length,
     owned: volumes.filter((volume) => volume.collection.isOwned).length,
     read: volumes.filter((volume) => volume.collection.isRead).length,

@@ -38,7 +38,7 @@ describe("collection state rules", () => {
 
   it("summarizes each collection state without treating read volumes as owned", () => {
     expect(summarizeEdition(tenVolumeFixture)).toEqual({
-      known: 9,
+      known: 10,
       released: 8,
       owned: 4,
       read: 2,
