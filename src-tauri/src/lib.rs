@@ -30,6 +30,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::backup::prepare_update_backup,
             commands::library::get_dashboard,
             commands::library::list_series,
             commands::library::get_series_detail,

@@ -19,6 +19,13 @@ impl AppError {
         )
     }
 
+    pub(crate) fn backup_failed() -> Self {
+        Self::new(
+            "backup_failed",
+            "Unable to protect the library before updating.",
+        )
+    }
+
     pub(crate) fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),

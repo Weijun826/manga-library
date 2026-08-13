@@ -4,6 +4,7 @@ pub mod repository;
 use std::{
     path::Path,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
@@ -102,6 +103,17 @@ impl Database {
             .commit()
             .map_err(|_| AppError::database_operation())?;
         Ok(value)
+    }
+
+    pub fn backup_to(&self, destination: &Path) -> Result<(), AppError> {
+        let source = self.lock_connection()?;
+        let mut destination =
+            Connection::open(destination).map_err(|_| AppError::backup_failed())?;
+        let backup = rusqlite::backup::Backup::new(&source, &mut destination)
+            .map_err(|_| AppError::backup_failed())?;
+        backup
+            .run_to_completion(5, Duration::from_millis(50), None)
+            .map_err(|_| AppError::backup_failed())
     }
 
     pub fn table_names(&self) -> Result<Vec<String>, AppError> {
