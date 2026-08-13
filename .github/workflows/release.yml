@@ -38,3 +38,30 @@ jobs:
           releaseDraft: false
           prerelease: false
           updaterJsonPreferNsis: true
+          uploadUpdaterJson: false
+          releaseAssetNamePattern: manga-library_[version]_[arch][setup].[ext]
+      - name: Publish updater manifest
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $signaturePath = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *.exe.sig | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $signaturePath) { throw "NSIS updater signature was not produced" }
+          $signature = (Get-Content -LiteralPath $signaturePath -Raw).Trim()
+          if (-not $signature) { throw "NSIS updater signature is empty" }
+          $assetName = "manga-library_${version}_x64-setup.exe"
+          $assetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/$assetName"
+          $platform = @{ signature = $signature; url = $assetUrl }
+          $manifest = @{
+            version = $version
+            notes = "漫畫書庫 $version：安全的 Windows 桌面更新。"
+            pub_date = (Get-Date).ToUniversalTime().ToString("o")
+            platforms = @{
+              "windows-x86_64" = $platform
+              "windows-x86_64-nsis" = $platform
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content latest.json -Encoding utf8NoBOM
+          Get-Content latest.json -Raw | ConvertFrom-Json | Out-Null
+          gh release upload "$env:GITHUB_REF_NAME" latest.json --clobber --repo "$env:GITHUB_REPOSITORY"
