@@ -1,7 +1,7 @@
 import type { ParsedIsbn } from "./model";
 
 export function normalizeIsbn(raw: string): string {
-  return raw.replace(/[\s-]/g, "").toUpperCase();
+  return raw.replace(/[ -]/g, "").replace(/x/g, "X");
 }
 
 function isValidIsbn10(isbn: string): boolean {

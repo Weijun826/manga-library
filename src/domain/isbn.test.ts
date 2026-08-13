@@ -23,4 +23,12 @@ describe("normalizeIsbn", () => {
   it("removes spaces and hyphens while uppercasing x", () => {
     expect(normalizeIsbn(" 0-8044 2957-x ")).toBe("080442957X");
   });
+
+  it("preserves tabs and newlines", () => {
+    expect(normalizeIsbn("0-8044\t2957-X\n")).toBe("08044\t2957X\n");
+  });
+
+  it("does not uppercase lower-case letters other than x", () => {
+    expect(normalizeIsbn("abx")).toBe("abX");
+  });
 });

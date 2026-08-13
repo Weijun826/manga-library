@@ -9,7 +9,9 @@ export function makeVolumeSortKey(label: string): string {
   const numericMatch = /^(\d+)(?:\.(\d{1,3}))?$/.exec(normalized);
 
   if (numericMatch) {
-    const [, integer, decimal = ""] = numericMatch;
+    const [, rawInteger, decimal = ""] = numericMatch;
+    const integer = rawInteger.replace(/^0+(?=\d)/, "");
+    if (integer.length > 6) throw new Error("invalid_volume_label");
     return `0:${integer.padStart(6, "0")}.${decimal.padEnd(3, "0")}`;
   }
 
