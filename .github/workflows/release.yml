@@ -37,4 +37,4 @@ jobs:
           releaseBody: Windows 漫畫收藏管理程式。安裝或更新前請先關閉正在執行的漫畫書庫。
           releaseDraft: false
           prerelease: false
-
+          updaterJsonPreferNsis: true
