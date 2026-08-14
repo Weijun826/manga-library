@@ -5,7 +5,7 @@ use crate::{
         models::{
             AddVolumeInput, CollectionItemPatch, CreateSeriesBatchInput, DashboardSummary,
             SeriesDetail, SeriesFilter, SeriesSummary, UpdateSeriesMetadataInput,
-            VolumeWithCollection,
+            UpdateVolumeDetailsInput, VolumeWithCollection,
         },
         repository, Database,
     },
@@ -75,6 +75,17 @@ pub async fn update_collection_item(
 ) -> Result<VolumeWithCollection, AppError> {
     let database = database_handle(state);
     run_database_operation(move || repository::update_collection_item(&database, &volume_id, patch))
+        .await
+}
+
+#[tauri::command]
+pub async fn update_volume_details(
+    state: State<'_, AppState>,
+    volume_id: String,
+    input: UpdateVolumeDetailsInput,
+) -> Result<VolumeWithCollection, AppError> {
+    let database = database_handle(state);
+    run_database_operation(move || repository::update_volume_details(&database, &volume_id, input))
         .await
 }
 

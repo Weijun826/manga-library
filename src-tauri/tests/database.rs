@@ -6,7 +6,7 @@ use manga_shelf_lib::db::{
         CompletionFilter, ContributorInput, ContributorRole, CreateEditionInput,
         CreateSeriesBatchInput, CreateSeriesInput, CreateVolumeInput, DatePrecision, EditionFormat,
         MetadataSource, PublicationStatus, PublicationStatusFilter, SeriesDetail, SeriesFilter,
-        UpdateSeriesMetadataInput,
+        UpdateSeriesMetadataInput, UpdateVolumeDetailsInput,
     },
     repository, Database,
 };
@@ -143,6 +143,155 @@ fn repository_add_volume_supports_numeric_and_special_labels_and_enforces_bounda
 
     let detail = repository::get_series_detail(&db, &created.id).expect("read updated series");
     assert_eq!(detail.known_volume_count, 12);
+}
+
+#[test]
+fn update_volume_details_normalizes_fields_and_saves_collection_atomically() {
+    let db = Database::in_memory().expect("database");
+    let created = repository::create_series_batch(&db, ten_volume_batch()).expect("create series");
+    let volume = &created.editions[0].volumes[2];
+
+    let updated = repository::update_volume_details(
+        &db,
+        &volume.id,
+        UpdateVolumeDetailsInput {
+            display_label: " 3.5 ".to_string(),
+            isbn: Some("978-4-08-883316-3".to_string()),
+            availability_status: AvailabilityStatus::Released,
+            collection: CollectionItemView {
+                is_owned: true,
+                is_read: true,
+                is_wishlisted: true,
+                purchase_price_amount: Some(180),
+                purchase_price_currency: Some("USD".to_string()),
+                acquired_on: Some("2024-02-29".to_string()),
+                condition: BookCondition::LikeNew,
+                storage_location: Some("  書櫃 B  ".to_string()),
+                notes: Some("  首刷  ".to_string()),
+            },
+        },
+    )
+    .expect("update volume details");
+
+    assert_eq!(updated.display_label, "3.5");
+    assert_eq!(updated.sort_key, "0:000003.500");
+    assert_eq!(updated.isbn_13.as_deref(), Some("9784088833163"));
+    assert!(updated.collection.is_owned);
+    assert!(updated.collection.is_read);
+    assert!(!updated.collection.is_wishlisted);
+    assert_eq!(updated.collection.purchase_price_amount, Some(180));
+    assert_eq!(
+        updated.collection.purchase_price_currency.as_deref(),
+        Some("TWD")
+    );
+    assert_eq!(
+        updated.collection.acquired_on.as_deref(),
+        Some("2024-02-29")
+    );
+    assert_eq!(
+        updated.collection.storage_location.as_deref(),
+        Some("書櫃 B")
+    );
+    assert_eq!(updated.collection.notes.as_deref(), Some("首刷"));
+}
+
+#[test]
+fn update_volume_details_rejects_duplicates_invalid_dates_and_negative_prices() {
+    let db = Database::in_memory().expect("database");
+    let created = repository::create_series_batch(&db, ten_volume_batch()).expect("create series");
+    let volume = &created.editions[0].volumes[2];
+
+    let cases = [
+        (
+            "duplicate label",
+            UpdateVolumeDetailsInput {
+                display_label: "2".to_string(),
+                isbn: None,
+                availability_status: AvailabilityStatus::Released,
+                collection: empty_collection(),
+            },
+            "volume_already_exists",
+        ),
+        (
+            "duplicate ISBN",
+            UpdateVolumeDetailsInput {
+                display_label: "3".to_string(),
+                isbn: Some("9789572690017".to_string()),
+                availability_status: AvailabilityStatus::Released,
+                collection: empty_collection(),
+            },
+            "isbn_already_exists",
+        ),
+        (
+            "invalid date",
+            UpdateVolumeDetailsInput {
+                display_label: "3".to_string(),
+                isbn: None,
+                availability_status: AvailabilityStatus::Released,
+                collection: CollectionItemView {
+                    acquired_on: Some("2023-02-29".to_string()),
+                    ..empty_collection()
+                },
+            },
+            "invalid_acquired_on",
+        ),
+        (
+            "negative price",
+            UpdateVolumeDetailsInput {
+                display_label: "3".to_string(),
+                isbn: None,
+                availability_status: AvailabilityStatus::Released,
+                collection: CollectionItemView {
+                    purchase_price_amount: Some(-1),
+                    ..empty_collection()
+                },
+            },
+            "invalid_purchase_price",
+        ),
+    ];
+
+    for (name, input, expected_code) in cases {
+        let error = repository::update_volume_details(&db, &volume.id, input).expect_err(name);
+        assert_eq!(error.code, expected_code, "{name}");
+    }
+}
+
+#[test]
+fn update_volume_details_rolls_back_volume_when_collection_write_fails() {
+    let db = Database::in_memory().expect("database");
+    let created = repository::create_series_batch(&db, ten_volume_batch()).expect("create series");
+    let volume = &created.editions[0].volumes[2];
+    db.with_transaction(|transaction| {
+        transaction.execute_batch(
+            "CREATE TRIGGER reject_collection_update BEFORE UPDATE ON collection_items \
+             BEGIN SELECT RAISE(ABORT, 'reject collection update'); END;",
+        )
+    })
+    .expect("install failure trigger");
+
+    let result = repository::update_volume_details(
+        &db,
+        &volume.id,
+        UpdateVolumeDetailsInput {
+            display_label: "改壞了".to_string(),
+            isbn: None,
+            availability_status: AvailabilityStatus::Released,
+            collection: CollectionItemView {
+                is_owned: true,
+                ..empty_collection()
+            },
+        },
+    );
+    assert!(result.is_err());
+
+    let unchanged = repository::get_series_detail(&db, &created.id).expect("unchanged detail");
+    let unchanged_volume = unchanged.editions[0]
+        .volumes
+        .iter()
+        .find(|item| item.id == volume.id)
+        .expect("same volume");
+    assert_eq!(unchanged_volume.display_label, "3");
+    assert_eq!(unchanged_volume.collection, volume.collection);
 }
 
 #[test]

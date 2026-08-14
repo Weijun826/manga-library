@@ -423,6 +423,145 @@ pub fn update_collection_item(
     })
 }
 
+pub fn update_volume_details(
+    database: &Database,
+    volume_id: &str,
+    input: UpdateVolumeDetailsInput,
+) -> Result<VolumeWithCollection, AppError> {
+    let display_label = required_text(&input.display_label, "invalid_volume_label")?;
+    let sort_key = make_volume_sort_key(&display_label)?;
+    let normalized_isbn = optional_text(input.isbn).map(|value| normalize_isbn(&value));
+    let (isbn_10, isbn_13) = match normalized_isbn {
+        None => (None, None),
+        Some(isbn) if valid_isbn10(&isbn) => (Some(isbn), None),
+        Some(isbn) if valid_isbn13(&isbn) => (None, Some(isbn)),
+        Some(_) => return Err(AppError::new("invalid_isbn", "The ISBN is not valid.")),
+    };
+
+    let (edition_id, exists) = database.with_transaction(|transaction| {
+        transaction
+            .query_row(
+                "SELECT edition_id FROM volumes WHERE id = ?1",
+                [volume_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|value| (value.clone().unwrap_or_default(), value.is_some()))
+    })?;
+    if !exists {
+        return Err(AppError::new(
+            "volume_not_found",
+            "The volume was not found.",
+        ));
+    }
+
+    let label_exists = database.with_transaction(|transaction| {
+        transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM volumes WHERE edition_id = ?1 AND display_label = ?2 AND id <> ?3)",
+            params![edition_id, display_label, volume_id],
+            |row| row.get::<_, bool>(0),
+        )
+    })?;
+    if label_exists {
+        return Err(AppError::new(
+            "volume_already_exists",
+            "This volume already exists.",
+        ));
+    }
+    if let Some(isbn) = isbn_10.as_ref().or(isbn_13.as_ref()) {
+        let isbn_exists = database.with_transaction(|transaction| {
+            transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM volumes WHERE (isbn_10 = ?1 OR isbn_13 = ?1) AND id <> ?2)",
+                params![isbn, volume_id],
+                |row| row.get::<_, bool>(0),
+            )
+        })?;
+        if isbn_exists {
+            return Err(AppError::new(
+                "isbn_already_exists",
+                "This ISBN already exists.",
+            ));
+        }
+    }
+
+    let mut collection = input.collection;
+    collection.acquired_on = optional_text(collection.acquired_on);
+    if collection
+        .acquired_on
+        .as_deref()
+        .is_some_and(|date| !valid_iso_date(date))
+    {
+        return Err(AppError::new(
+            "invalid_acquired_on",
+            "The acquired date is invalid.",
+        ));
+    }
+    if collection
+        .purchase_price_amount
+        .is_some_and(|amount| amount < 0)
+    {
+        return Err(AppError::new(
+            "invalid_purchase_price",
+            "The purchase price is invalid.",
+        ));
+    }
+    collection.purchase_price_currency =
+        collection.purchase_price_amount.map(|_| "TWD".to_string());
+    collection.storage_location = optional_text(collection.storage_location);
+    collection.notes = optional_text(collection.notes);
+    let collection = enforce_ownership_rule(collection);
+    let collection_id = new_uuid();
+
+    database.with_transaction(|transaction| {
+        if transaction.execute(
+            "UPDATE volumes SET display_label = ?2, sort_key = ?3, isbn_10 = ?4, isbn_13 = ?5, \
+                availability_status = ?6, metadata_source = 'manual', \
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+            params![
+                volume_id,
+                display_label,
+                sort_key,
+                isbn_10,
+                isbn_13,
+                input.availability_status.as_str(),
+            ],
+        )? != 1
+        {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        transaction.execute(
+            "INSERT INTO collection_items (\
+                id, volume_id, is_owned, is_read, is_wishlisted, purchase_price_amount, \
+                purchase_price_currency, acquired_on, condition, storage_location, notes, \
+                created_at, updated_at\
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, \
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) \
+             ON CONFLICT(volume_id) DO UPDATE SET \
+                is_owned = excluded.is_owned, is_read = excluded.is_read, \
+                is_wishlisted = excluded.is_wishlisted, \
+                purchase_price_amount = excluded.purchase_price_amount, \
+                purchase_price_currency = excluded.purchase_price_currency, \
+                acquired_on = excluded.acquired_on, condition = excluded.condition, \
+                storage_location = excluded.storage_location, notes = excluded.notes, \
+                updated_at = excluded.updated_at",
+            params![
+                collection_id,
+                volume_id,
+                bool_integer(collection.is_owned),
+                bool_integer(collection.is_read),
+                bool_integer(collection.is_wishlisted),
+                collection.purchase_price_amount,
+                collection.purchase_price_currency,
+                collection.acquired_on,
+                collection.condition.as_str(),
+                collection.storage_location,
+                collection.notes,
+            ],
+        )?;
+        find_volume_by_id_in_transaction(transaction, volume_id)
+    })
+}
+
 pub fn find_volume_by_isbn(
     database: &Database,
     isbn: &str,
@@ -1016,6 +1155,31 @@ fn valid_isbn13(isbn: &str) -> bool {
             .sum::<u32>()
             % 10
             == 0
+}
+
+fn valid_iso_date(value: &str) -> bool {
+    let parts = value.split('-').collect::<Vec<_>>();
+    if parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return false;
+    }
+    let Ok(year) = parts[0].parse::<u32>() else {
+        return false;
+    };
+    let Ok(month) = parts[1].parse::<u32>() else {
+        return false;
+    };
+    let Ok(day) = parts[2].parse::<u32>() else {
+        return false;
+    };
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&day)
 }
 
 fn escape_like_pattern(value: &str) -> String {

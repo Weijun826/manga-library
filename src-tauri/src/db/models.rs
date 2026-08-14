@@ -497,6 +497,15 @@ pub struct AddVolumeInput {
     pub collection: CollectionItemView,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateVolumeDetailsInput {
+    pub display_label: String,
+    pub isbn: Option<String>,
+    pub availability_status: AvailabilityStatus,
+    pub collection: CollectionItemView,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CollectionItemPatch {
