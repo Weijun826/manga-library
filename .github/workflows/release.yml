@@ -51,6 +51,10 @@ jobs:
           $signature = (Get-Content -LiteralPath $signaturePath -Raw).Trim()
           if (-not $signature) { throw "NSIS updater signature is empty" }
           $assetName = "manga-library_${version}_x64-setup.exe"
+          $installerPath = $signaturePath -replace '\.sig$', ''
+          Copy-Item -LiteralPath $installerPath -Destination $assetName
+          Copy-Item -LiteralPath $signaturePath -Destination "$assetName.sig"
+          gh release upload "$env:GITHUB_REF_NAME" $assetName "$assetName.sig" --clobber --repo "$env:GITHUB_REPOSITORY"
           $assetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/$assetName"
           $platform = @{ signature = $signature; url = $assetUrl }
           $manifest = @{
