@@ -11,6 +11,7 @@ import type {
   SeriesDetail,
   SeriesFilter,
   SeriesSummary,
+  UpdateVolumeDetailsInput,
   VolumeWithCollection,
 } from "../domain/model";
 import { tauriLibrary } from "./tauriLibrary";
@@ -245,6 +246,23 @@ describe("tauriLibrary", () => {
     expect(invokeMock).toHaveBeenCalledWith("update_collection_item", {
       volumeId: "volume-1",
       patch,
+    });
+  });
+
+  it("maps updateVolumeDetails with the volume ID and full input", async () => {
+    const input: UpdateVolumeDetailsInput = {
+      displayLabel: "1.5",
+      isbn: "9784088833163",
+      availabilityStatus: "released",
+      collection: collectionFixture,
+    };
+    invokeMock.mockResolvedValue(volumeFixture);
+
+    await expect(tauriLibrary.updateVolumeDetails("volume-1", input)).resolves.toBe(volumeFixture);
+
+    expect(invokeMock).toHaveBeenCalledWith("update_volume_details", {
+      volumeId: "volume-1",
+      input,
     });
   });
 

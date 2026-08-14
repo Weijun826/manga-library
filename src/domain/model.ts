@@ -154,6 +154,13 @@ export interface AddVolumeInput {
   collection: CollectionItemView;
 }
 
+export interface UpdateVolumeDetailsInput {
+  displayLabel: string;
+  isbn: string | null;
+  availabilityStatus: AvailabilityStatus;
+  collection: CollectionItemView;
+}
+
 export type CollectionItemPatch = Partial<CollectionItemView>;
 
 export interface BackupInfo {

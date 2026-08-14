@@ -40,6 +40,10 @@ export const tauriLibrary: LibraryPort = {
     return invoke<VolumeWithCollection>("update_collection_item", { volumeId, patch });
   },
 
+  updateVolumeDetails(volumeId, input) {
+    return invoke<VolumeWithCollection>("update_volume_details", { volumeId, input });
+  },
+
   findVolumeByIsbn(isbn) {
     return invoke<VolumeWithCollection | null>("find_volume_by_isbn", { isbn });
   },

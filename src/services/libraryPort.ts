@@ -10,6 +10,7 @@ import type {
   SeriesFilter,
   SeriesSummary,
   UpdateSeriesMetadataInput,
+  UpdateVolumeDetailsInput,
   VolumeWithCollection,
 } from "../domain/model";
 
@@ -26,6 +27,10 @@ export interface LibraryPort {
   updateCollectionItem(
     volumeId: string,
     patch: CollectionItemPatch,
+  ): Promise<VolumeWithCollection>;
+  updateVolumeDetails(
+    volumeId: string,
+    input: UpdateVolumeDetailsInput,
   ): Promise<VolumeWithCollection>;
   findVolumeByIsbn(isbn: string): Promise<VolumeWithCollection | null>;
   deleteSeries(seriesId: string): Promise<void>;

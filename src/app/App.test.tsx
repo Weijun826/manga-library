@@ -9,6 +9,7 @@ import type {
   SeriesDetail,
   SeriesSummary,
   UpdateSeriesMetadataInput,
+  UpdateVolumeDetailsInput,
   VolumeWithCollection,
 } from "../domain/model";
 import type { LibraryPort } from "../services/libraryPort";
@@ -117,6 +118,17 @@ class MemoryLibrary implements LibraryPort {
     }
     throw new Error("not found");
   }
+  async updateVolumeDetails(volumeId: string, input: UpdateVolumeDetailsInput): Promise<VolumeWithCollection> {
+    for (const detail of this.details) for (const edition of detail.editions) for (const volume of edition.volumes) if (volume.id === volumeId) {
+      volume.displayLabel = input.displayLabel;
+      volume.availabilityStatus = input.availabilityStatus;
+      volume.isbn10 = input.isbn?.length === 10 ? input.isbn : null;
+      volume.isbn13 = input.isbn?.length === 13 ? input.isbn : null;
+      volume.collection = { ...input.collection, isWishlisted: input.collection.isOwned ? false : input.collection.isWishlisted };
+      return volume;
+    }
+    throw new Error("not found");
+  }
   async findVolumeByIsbn(): Promise<VolumeWithCollection | null> { return null; }
   async deleteSeries(seriesId: string): Promise<void> { this.details = this.details.filter((detail) => detail.id !== seriesId); }
   async exportBackup(): Promise<never> { throw new Error("not implemented"); }
@@ -173,6 +185,20 @@ describe("App MVP integration", () => {
     await user.click(screen.getByRole("button", { name: "擁有" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "擁有" })).toHaveAttribute("aria-pressed", "true"));
     expect(screen.getByRole("button", { name: "願望" })).toBeDisabled();
+  });
+
+  it("edits a volume from the detail view and refreshes the saved label", async () => {
+    const user = userEvent.setup();
+    renderApp(new MemoryLibrary([detailFixture()]));
+    await screen.findByRole("heading", { name: "漫畫書庫" });
+    await user.click(screen.getByRole("button", { name: "我的漫畫" }));
+    await user.click(await screen.findByRole("button", { name: /測試漫畫/ }));
+    await user.click(screen.getByRole("button", { name: "編輯資料" }));
+    await user.clear(screen.getByLabelText("卷數／標籤"));
+    await user.type(screen.getByLabelText("卷數／標籤"), "1.5");
+    await user.click(screen.getByRole("button", { name: "儲存變更" }));
+    expect(await screen.findByText("1.5")).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: /編輯第/ })).not.toBeInTheDocument();
   });
 
   it("requires an in-app confirmation before deleting a series", async () => {

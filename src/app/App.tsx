@@ -6,6 +6,7 @@ import { SeriesCover } from "../components/SeriesCover";
 import { EditSeriesView } from "../components/EditSeriesView";
 import { AddVolumeView } from "../components/AddVolumeView";
 import { UpdateStatus } from "../components/UpdateStatus";
+import { VolumeEditorDrawer } from "../components/VolumeEditorDrawer";
 import { makeVolumeSortKey } from "../domain/volumeOrder";
 import type {
   CollectionItemView,
@@ -18,6 +19,7 @@ import type {
   VolumeWithCollection,
   UpdateSeriesMetadataInput,
   AddVolumeInput,
+  UpdateVolumeDetailsInput,
 } from "../domain/model";
 import { selectCoverImage } from "../services/coverPicker";
 import type { LibraryPort } from "../services/libraryPort";
@@ -135,6 +137,7 @@ export function App({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [updatingVolume, setUpdatingVolume] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [editingVolume, setEditingVolume] = useState<VolumeWithCollection | null>(null);
   const alive = useRef(true);
   const dashboardRequest = useRef(0);
   const seriesRequest = useRef(0);
@@ -270,6 +273,19 @@ export function App({
     finally { setIsSubmitting(false); }
   }
 
+  async function saveVolumeDetails(input: UpdateVolumeDetailsInput) {
+    if (!editingVolume || !selectedId) return;
+    setIsSubmitting(true);
+    try {
+      await library.updateVolumeDetails(editingVolume.id, input);
+      if (!alive.current) return;
+      await Promise.all([loadDetail(selectedId), loadDashboard(), loadSeries()]);
+      if (alive.current) setEditingVolume(null);
+    } finally {
+      if (alive.current) setIsSubmitting(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="主要導覽">
@@ -284,12 +300,13 @@ export function App({
       <section className="workspace">
         {screen === "dashboard" && <DashboardView state={dashboard} onRetry={loadDashboard} onAdd={() => setScreen("add")} onOpen={openDetail} />}
         {screen === "library" && <LibraryView state={series} query={query} onQueryChange={setQuery} onRetry={loadSeries} onOpen={openDetail} onAdd={() => setScreen("add")} />}
-        {screen === "detail" && <DetailView state={detail} onRetry={() => selectedId && loadDetail(selectedId)} onBack={goToLibrary} onUpdate={updateCollection} updatingVolume={updatingVolume} onDelete={() => setDeleteOpen(true)} onEdit={() => setScreen("edit")} onAddVolume={() => setScreen("addVolume")} />}
+        {screen === "detail" && <DetailView state={detail} onRetry={() => selectedId && loadDetail(selectedId)} onBack={goToLibrary} onUpdate={updateCollection} onEditVolume={setEditingVolume} updatingVolume={updatingVolume} onDelete={() => setDeleteOpen(true)} onEdit={() => setScreen("edit")} onAddVolume={() => setScreen("addVolume")} />}
         {screen === "edit" && detail.data && <EditSeriesView series={detail.data} busy={isSubmitting} onCancel={() => setScreen("detail")} onSave={saveMetadata} onChooseCover={chooseCover} onRemoveCover={removeCover} />}
         {screen === "addVolume" && detail.data?.editions[0] && <AddVolumeView edition={detail.data.editions[0]} busy={isSubmitting} onCancel={() => setScreen("detail")} onSave={saveVolume} />}
         {screen === "add" && <AddView form={form} errors={formErrors} isSubmitting={isSubmitting} onChange={updateForm} onSubmit={submitForm} onCancel={goToLibrary} />}
       </section>
       {deleteOpen && detail.data && <ConfirmDialog title="刪除這個系列？" description={`「${detail.data.title}」和其冊數紀錄將一併移除。`} isSubmitting={isSubmitting} onCancel={() => setDeleteOpen(false)} onConfirm={deleteSelected} />}
+      {editingVolume && <VolumeEditorDrawer volume={editingVolume} busy={isSubmitting} onClose={() => setEditingVolume(null)} onSave={saveVolumeDetails} />}
     </main>
   );
 }
@@ -305,11 +322,23 @@ function LibraryView({ state, query, onQueryChange, onRetry, onOpen, onAdd }: { 
   return <div className="page"><header className="page-heading compact"><div><p className="eyebrow">我的漫畫</p><h1>所有系列</h1></div><button className="primary" onClick={onAdd}>新增漫畫</button></header><label className="search"><span>搜尋</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="搜尋標題或作者" /></label>{state.status === "loading" ? <Loading label="正在讀取漫畫…" /> : state.status === "error" || !state.data ? <ErrorState onRetry={onRetry} /> : state.data.length === 0 ? <EmptyState onAdd={onAdd} title={query ? "找不到符合的漫畫" : undefined} /> : <div className="series-grid">{state.data.map((item) => <SeriesCard key={item.id} series={item} onOpen={onOpen} />)}</div>}</div>;
 }
 
-function DetailView({ state, onRetry, onBack, onUpdate, updatingVolume, onDelete, onEdit, onAddVolume }: { state: LoadState<SeriesDetail>; onRetry: () => void; onBack: () => void; onUpdate: (volume: VolumeWithCollection, flag: "isOwned" | "isRead" | "isWishlisted") => void; updatingVolume: string | null; onDelete: () => void; onEdit: () => void; onAddVolume: () => void }) {
+function DetailView({ state, onRetry, onBack, onUpdate, onEditVolume, updatingVolume, onDelete, onEdit, onAddVolume }: { state: LoadState<SeriesDetail>; onRetry: () => void; onBack: () => void; onUpdate: (volume: VolumeWithCollection, flag: "isOwned" | "isRead" | "isWishlisted") => void; onEditVolume: (volume: VolumeWithCollection) => void; updatingVolume: string | null; onDelete: () => void; onEdit: () => void; onAddVolume: () => void }) {
   if (state.status === "loading") return <Loading label="正在開啟系列…" />;
   if (state.status === "error" || !state.data) return <ErrorState onRetry={onRetry} />;
   const series = state.data;
-  return <div className="page"><button className="back" onClick={onBack}>← 回到我的漫畫</button><header className="detail-head"><SeriesCover cover={series.representativeCover} title={series.title} large /><div><p className="eyebrow">{series.publishers.join("、") || "出版社未填寫"}</p><h1>{series.title}</h1><p>{authorText(series)}</p><p className="muted">{summaryText(series)}</p></div><div className="detail-buttons"><button className="secondary" onClick={onEdit}>編輯系列</button><button className="danger ghost" onClick={onDelete}>刪除系列</button></div></header>{state.error && <p className="form-error" role="alert">{state.error}</p>}{series.description && <p className="description">{series.description}</p>}{series.editions.map((edition) => <section className="edition" key={edition.id}><div className="edition-head"><div><h2>{edition.name}</h2><p>{edition.publisher} · {edition.volumes.length} 冊</p></div><button className="primary" onClick={onAddVolume}>＋ 新增卷冊</button></div><div className="volume-list">{edition.volumes.map((volume) => <article className="volume-row" key={volume.id}><span className="volume-number">{volume.displayLabel}</span><div className="volume-actions"><Toggle label="擁有" pressed={volume.collection.isOwned} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isOwned")} /><Toggle label="已讀" pressed={volume.collection.isRead} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isRead")} /><Toggle label="願望" pressed={volume.collection.isWishlisted} disabled={updatingVolume === volume.id || volume.collection.isOwned} onClick={() => onUpdate(volume, "isWishlisted")} /></div></article>)}</div></section>)}</div>;
+  return <div className="page">
+    <button className="back" onClick={onBack}>← 回到我的漫畫</button>
+    <header className="detail-head"><SeriesCover cover={series.representativeCover} title={series.title} large /><div><p className="eyebrow">{series.publishers.join("、") || "出版社未填寫"}</p><h1>{series.title}</h1><p>{authorText(series)}</p><p className="muted">{summaryText(series)}</p></div><div className="detail-buttons"><button className="secondary" onClick={onEdit}>編輯系列</button><button className="danger ghost" onClick={onDelete}>刪除系列</button></div></header>
+    {state.error && <p className="form-error" role="alert">{state.error}</p>}
+    {series.description && <p className="description">{series.description}</p>}
+    {series.editions.map((edition) => <section className="edition" key={edition.id}>
+      <div className="edition-head"><div><h2>{edition.name}</h2><p>{edition.publisher} · {edition.volumes.length} 冊</p></div><button className="primary" onClick={onAddVolume}>＋ 新增卷冊</button></div>
+      <div className="volume-list">{edition.volumes.map((volume) => <article className="volume-row" key={volume.id}>
+        <span className="volume-number">{volume.displayLabel}</span>
+        <div className="volume-actions"><button className="volume-edit" onClick={() => onEditVolume(volume)}>編輯資料</button><Toggle label="擁有" pressed={volume.collection.isOwned} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isOwned")} /><Toggle label="已讀" pressed={volume.collection.isRead} disabled={updatingVolume === volume.id} onClick={() => onUpdate(volume, "isRead")} /><Toggle label="願望" pressed={volume.collection.isWishlisted} disabled={updatingVolume === volume.id || volume.collection.isOwned} onClick={() => onUpdate(volume, "isWishlisted")} /></div>
+      </article>)}</div>
+    </section>)}
+  </div>;
 }
 
 function AddView({ form, errors, isSubmitting, onChange, onSubmit, onCancel }: { form: typeof initialForm; errors: Record<string, string>; isSubmitting: boolean; onChange: (field: keyof typeof initialForm, value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCancel: () => void }) {
