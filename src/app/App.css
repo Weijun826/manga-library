@@ -22,6 +22,8 @@ nav { display: grid; gap: 6px; }.nav-link { color: #c9c3bd; background: transpar
 :root { color: #231f20; background: #eee8dc; }
 .app-shell { background: radial-gradient(circle at 80% 8%, #fffaf0 0, #eee8dc 48%, #e2dacb 100%); }
 .sidebar { background: #171516; border-right: 5px solid #d43a32; box-shadow: 8px 0 0 #231f20; }
+.brand strong { color: #fffaf0; }
+.brand small,.update-status { color: #cfc7bb; }
 .brand-mark,.primary,.toggle.selected { color: #fffaf0; background: #d43a32; border-color: #d43a32; border-radius: 3px; }
 .primary:hover { background: #b92620; }
 .eyebrow,.back { color: #d43a32 !important; }
